@@ -40,6 +40,7 @@ public static class Program
 
     // Active Stratagem Instances
     private static List<AirstrikeInstance> _airstrikes = new();
+    private static List<ExplosionInstance> _explosions = new();
     private static List<TurretInstance> _turrets = new();
     private static List<OrbitalLaserInstance> _orbitalLasers = new();
     private static List<GasCloudInstance> _gasClouds = new();
@@ -51,7 +52,16 @@ public static class Program
 
     // UI selection state
     private static int _selectedStratagemSlot = 0;
-    private static int _selectedBestiaryIndex = 1;
+    private static int _selectedBestiaryIndex = 0;
+    private static Faction _selectedBestiaryFaction = Faction.Terminids;
+    private static int _selectedArmoryIndex = 0;
+    private static string _inspectedStratagemId = "eagle_500kg";
+
+    // Cinematic & Mission VFX
+    private static List<ShockwaveRing> _shockwaves = new();
+    private static List<VictoryConfetti> _confetti = new();
+    private static MissionBannerNotification? _missionBanner = null;
+    private static HellpodDrop? _activeHellpod = null;
 
     public static void Main()
     {
@@ -60,6 +70,8 @@ public static class Program
         Raylib.SetTargetFPS(Constants.TargetFps);
 
         EnemySpriteManager.Init();
+        ProceduralAssetRenderer.Initialize();
+        AssetGenerator.Initialize();
         _save = SaveData.Load();
         _sound.Init(_save.Settings.MasterVolume);
 
@@ -100,6 +112,7 @@ public static class Program
 
         _sound.Close();
         EnemySpriteManager.Close();
+        AssetGenerator.Unload();
         Raylib.CloseWindow();
     }
 
@@ -122,9 +135,13 @@ public static class Program
         _acidPools.Clear();
         _debrisList.Clear();
         _airstrikes.Clear();
+        _explosions.Clear();
         _turrets.Clear();
         _orbitalLasers.Clear();
         _gasClouds.Clear();
+        _shockwaves.Clear();
+        _confetti.Clear();
+        _missionBanner = null;
         Array.Clear(_stratagemCooldowns, 0, _stratagemCooldowns.Length);
 
         // Generate tactical terrain rocks avoiding extraction and player spawn
@@ -143,15 +160,38 @@ public static class Program
         // Apply Hangar damage bonus
         _player.CurrentWeapon.Damage = (int)(WeaponRegistry.GetWeapon(_save.EquippedWeapon).Damage * (1f + _save.Hangar.DamageLevel * 0.10f));
 
+        // Iniciar descenso de Hellpod orbital sobre el Helldiver
+        _activeHellpod = new HellpodDrop
+        {
+            TargetPos = _player.Position,
+            Altitude = 1100f,
+            Speed = 2200f,
+            Landed = false
+        };
+
         // Spawn initial HVT if mission is Assassinate
         if (_campaign.Mission.Type == MissionType.Assassinate)
         {
-            var hvtType = _campaign.Planet.Faction == Faction.Terminids ? EnemyType.Titan : EnemyType.Hulk;
+            var hvtType = _campaign.Planet.Faction == Faction.Terminids ? EnemyType.Titan :
+                          (_campaign.Planet.Faction == Faction.Illuminate ? EnemyType.CouncilMember : EnemyType.Warlord);
             var hvtPos = new Vector2(Constants.WorldSize * 0.75f, Constants.WorldSize * 0.75f);
             _enemies.Add(Enemy.Create(hvtType, _campaign.Planet.Faction, hvtPos, isHvt: true));
         }
 
         SetVoiceAlert($"DESPLIEGUE EN {_campaign.Planet.Name.ToUpper()}: {_campaign.Mission.Title}");
+    }
+
+    private static void TriggerMissionNotification(string title, string subtitle, Color color)
+    {
+        _missionBanner = new MissionBannerNotification
+        {
+            Title = title,
+            Subtitle = subtitle,
+            PrimaryColor = color,
+            Timer = 0f,
+            Duration = 4.2f
+        };
+        _sound.PlayVoiceAlert();
     }
 
     private static void SetVoiceAlert(string text)
@@ -234,15 +274,27 @@ public static class Program
     private static void UpdateMenu()
     {
         Vector2 mouse = Raylib.GetMousePosition();
-        int cx = Raylib.GetScreenWidth() / 2;
+        int sw = Raylib.GetScreenWidth();
+        int sh = Raylib.GetScreenHeight();
+        int cx = sw / 2;
 
-        Rectangle btnPlay = new(cx - 150, 480, 300, 50);
-        Rectangle btnArmory = new(cx - 280, 545, 175, 42);
-        Rectangle btnStrat = new(cx - 90, 545, 175, 42);
-        Rectangle btnHangar = new(cx + 100, 545, 175, 42);
-        Rectangle btnReroll = new(cx - 280, 600, 175, 38);
-        Rectangle btnBestiary = new(cx - 90, 600, 175, 38);
-        Rectangle btnSettings = new(cx + 100, 600, 175, 38);
+        // Botón principal de Despliegue en el centro
+        Rectangle btnPlay = new(cx - 190, 470, 380, 52);
+
+        // Barra inferior (Dock Táctico Horizontal) con las 6 opciones en fila
+        int btnW = 180;
+        int btnH = 44;
+        int btnGap = 12;
+        int totalDockW = 6 * btnW + 5 * btnGap; // 1140 px
+        int startX = cx - totalDockW / 2;
+        int dockY = sh - 58;
+
+        Rectangle btnReroll   = new(startX + 0 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnArmory   = new(startX + 1 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnStrat    = new(startX + 2 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnHangar   = new(startX + 3 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnBestiary = new(startX + 4 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnSettings = new(startX + 5 * (btnW + btnGap), dockY, btnW, btnH);
 
         if (Raylib.IsMouseButtonPressed(MouseButton.Left))
         {
@@ -251,21 +303,24 @@ public static class Program
                 _state = GameState.Playing;
                 _sound.PlayShoot("ar");
             }
+            else if (Raylib.CheckCollisionPointRec(mouse, btnReroll))
+            {
+                StartNewCampaign();
+                _sound.PlayDeflect();
+            }
             else if (Raylib.CheckCollisionPointRec(mouse, btnArmory))
             {
                 _state = GameState.Armory;
+                _sound.PlayDeflect();
             }
             else if (Raylib.CheckCollisionPointRec(mouse, btnStrat))
             {
                 _state = GameState.Stratagems;
+                _sound.PlayDeflect();
             }
             else if (Raylib.CheckCollisionPointRec(mouse, btnHangar))
             {
                 _state = GameState.Hangar;
-            }
-            else if (Raylib.CheckCollisionPointRec(mouse, btnReroll))
-            {
-                StartNewCampaign();
                 _sound.PlayDeflect();
             }
             else if (Raylib.CheckCollisionPointRec(mouse, btnBestiary))
@@ -301,6 +356,79 @@ public static class Program
             _camera.Offset += new Vector2(ox, oy);
         }
 
+        // Update Hellpod Drop Cinematic
+        if (_activeHellpod != null)
+        {
+            if (!_activeHellpod.Landed)
+            {
+                _activeHellpod.Altitude -= _activeHellpod.Speed * dt;
+                for (int t = 0; t < 2; t++)
+                {
+                    _particles.Add(new Particle
+                    {
+                        Position = _activeHellpod.TargetPos + new Vector2((float)_rnd.NextDouble() * 16f - 8f, -_activeHellpod.Altitude + (float)_rnd.NextDouble() * 10f),
+                        Velocity = new Vector2((float)_rnd.NextDouble() * 30f - 15f, -90f),
+                        Radius = (float)_rnd.NextDouble() * 4f + 2f,
+                        Color = (float)_rnd.NextDouble() > 0.4f ? Constants.FlameOrange : Constants.GunmetalLight,
+                        Life = 0.35f,
+                        MaxLife = 0.35f
+                    });
+                }
+
+                if (_activeHellpod.Altitude <= 0)
+                {
+                    _activeHellpod.Altitude = 0;
+                    _activeHellpod.Landed = true;
+                    _screenShake = 22f;
+                    _sound.PlayExplosion("orbital");
+                    _shockwaves.Add(new ShockwaveRing
+                    {
+                        Position = _activeHellpod.TargetPos,
+                        MaxRadius = 300f,
+                        Speed = 650f,
+                        Life = 0.5f,
+                        Color = Constants.TacticalCyan
+                    });
+
+                    for (int p = 0; p < 35; p++)
+                    {
+                        float angle = (float)_rnd.NextDouble() * MathF.PI * 2f;
+                        float spd = (float)_rnd.NextDouble() * 200f + 60f;
+                        _particles.Add(new Particle
+                        {
+                            Position = _activeHellpod.TargetPos,
+                            Velocity = new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * spd,
+                            Radius = (float)_rnd.NextDouble() * 4f + 2f,
+                            Color = (float)_rnd.NextDouble() > 0.5f ? Constants.FlameOrange : Constants.GunmetalLight,
+                            Life = (float)_rnd.NextDouble() * 0.45f + 0.25f,
+                            MaxLife = 0.55f
+                        });
+                    }
+                }
+            }
+            else
+            {
+                _activeHellpod.FadeTimer -= dt;
+                if (_activeHellpod.FadeTimer <= 0) _activeHellpod = null;
+            }
+        }
+
+        // Update Shockwaves
+        for (int i = _shockwaves.Count - 1; i >= 0; i--)
+        {
+            var sw = _shockwaves[i];
+            sw.Radius += sw.Speed * dt;
+            sw.Life -= dt;
+            if (sw.Life <= 0 || sw.Radius >= sw.MaxRadius) _shockwaves.RemoveAt(i);
+        }
+
+        // Update Mission Banner Notification
+        if (_missionBanner != null)
+        {
+            _missionBanner.Timer += dt;
+            if (_missionBanner.Finished) _missionBanner = null;
+        }
+
         // WASD Input
         Vector2 moveInput = Vector2.Zero;
         if (Raylib.IsKeyDown(KeyboardKey.W)) moveInput.Y -= 1f;
@@ -313,6 +441,12 @@ public static class Program
         {
             _player.Dive(moveInput);
             _sound.PlayDive();
+        }
+
+        // Tactical Manual Reload (Key R)
+        if (Raylib.IsKeyPressed(KeyboardKey.R))
+        {
+            _player.Reload(() => _sound.PlayReload());
         }
 
         // Stratagems cooldowns & hotkeys (1, 2, 3)
@@ -335,14 +469,18 @@ public static class Program
             spawnParticle: p => _particles.Add(p),
             playShootSfx: () =>
             {
-                if (_player.CurrentWeapon.IsLaser) _sound.PlayShoot("laser");
+                if (!string.IsNullOrEmpty(_player.CurrentWeapon.Key))
+                    _sound.PlayShoot(_player.CurrentWeapon.Key);
+                else if (_player.CurrentWeapon.IsLaser) _sound.PlayShoot("laser");
                 else if (_player.CurrentWeapon.IsPlasma) _sound.PlayShoot("plasma");
                 else if (_player.CurrentWeapon.Pellets > 1) _sound.PlayShoot("shotgun");
                 else _sound.PlayShoot("ar");
             },
             mouseWorld: mouseWorld,
             autoAim: _save.Settings.AutoAimAssist,
-            isFiring: isFiring);
+            isFiring: isFiring,
+            onReload: () => _sound.PlayReload(),
+            onEmpty: () => _sound.PlayEmptyClick());
 
         // Terrain Rock Collisions for Player
         foreach (var rock in _terrainRocks)
@@ -452,23 +590,14 @@ public static class Program
                 });
                 break;
             case "sentry_gatling":
-                _turrets.Add(new TurretInstance
-                {
-                    Position = _player.Position,
-                    Duration = 24f,
-                    FireRate = 0.08f,
-                    Range = 420f,
-                    Type = "gatling"
-                });
-                break;
             case "sentry_autocannon":
-                _turrets.Add(new TurretInstance
+                _airstrikes.Add(new AirstrikeInstance
                 {
-                    Position = _player.Position,
-                    Duration = 28f,
-                    FireRate = 0.55f,
-                    Range = 550f,
-                    Type = "autocannon"
+                    Position = deployPos,
+                    Timer = 1.8f,
+                    MaxTimer = 1.8f,
+                    Radius = 45f,
+                    Type = id
                 });
                 break;
             case "orbital_laser":
@@ -508,7 +637,8 @@ public static class Program
                         outP.SpawnTimer = 6.5f;
                         if (_enemies.Count < 50)
                         {
-                            var enemyType = _campaign.Planet.Faction == Faction.Terminids ? EnemyType.Warrior : EnemyType.Trooper;
+                            var enemyType = _campaign.Planet.Faction == Faction.Terminids ? EnemyType.Warrior :
+                                            (_campaign.Planet.Faction == Faction.Illuminate ? EnemyType.Outcast : EnemyType.Trooper);
                             _enemies.Add(Enemy.Create(enemyType, _campaign.Planet.Faction, outP.Position + new Vector2(_rnd.Next(-30, 30), _rnd.Next(-30, 30))));
                         }
                     }
@@ -517,6 +647,9 @@ public static class Program
             if (allOutpostsDead && !_extractionAvailable)
             {
                 _extractionAvailable = true;
+                _campaign.Mission.Completed = true;
+                _shockwaves.Add(new ShockwaveRing { Position = _player.Position, MaxRadius = 420f, Speed = 600f, Life = 0.55f, Color = Constants.LibertyGreen });
+                TriggerMissionNotification("¡TODOS LOS PUESTOS DESTRUIDOS!", "ZONA DE EXTRACCIÓN ACTIVADA // PROCEDA AL SITIO", Constants.LibertyGreen);
                 SetVoiceAlert("SUPER TIERRA: OBJETIVO CUMPLIDO. PROCEDA A LA ZONA DE EXTRACCIÓN.");
             }
         }
@@ -537,6 +670,7 @@ public static class Program
                         {
                             it.Completed = true;
                             _sound.PlayVictory();
+                            _shockwaves.Add(new ShockwaveRing { Position = it.Position, MaxRadius = 380f, Speed = 600f, Life = 0.5f, Color = Constants.SuperEarthYellow });
                             SetVoiceAlert($"SUPER TIERRA: {it.Type.ToUpper()} ACTIVADO EXITOSAMENTE.");
                         }
                     }
@@ -549,6 +683,9 @@ public static class Program
             if (allCompleted && !_extractionAvailable)
             {
                 _extractionAvailable = true;
+                _campaign.Mission.Completed = true;
+                _shockwaves.Add(new ShockwaveRing { Position = _player.Position, MaxRadius = 450f, Speed = 650f, Life = 0.6f, Color = Constants.SuperEarthYellow });
+                TriggerMissionNotification("¡OBJETIVO ESTRATÉGICO COMPLETADO!", "DATOS TRANSMITIDOS // EXTRACCIÓN AUTORIZADA", Constants.SuperEarthYellow);
                 SetVoiceAlert("SUPER TIERRA: DATOS TRANSMITIDOS. EXTRACCIÓN AUTORIZADA.");
             }
         }
@@ -558,7 +695,129 @@ public static class Program
             if (!hvtAlive && !_extractionAvailable)
             {
                 _extractionAvailable = true;
+                _campaign.Mission.Completed = true;
+                _shockwaves.Add(new ShockwaveRing { Position = _player.Position, MaxRadius = 420f, Speed = 600f, Life = 0.55f, Color = Constants.DemocracyRed });
+                TriggerMissionNotification("¡OBJETIVO DE ALTO VALOR ELIMINADO!", "LA AMENAZA HA SIDO NEUTRALIZADA // EXTRAIGAN AHORA", Constants.DemocracyRed);
                 SetVoiceAlert("SUPER TIERRA: OBJETIVO DE ALTO VALOR ELIMINADO. EXTRAIGAN AHORA.");
+            }
+        }
+        else if (_campaign.Mission.Type == MissionType.EradicateHive)
+        {
+            if (_campaign.CurrentKills >= _campaign.KillsRequired && !_extractionAvailable)
+            {
+                _extractionAvailable = true;
+                _campaign.Mission.Completed = true;
+                _shockwaves.Add(new ShockwaveRing { Position = _player.Position, MaxRadius = 450f, Speed = 650f, Life = 0.6f, Color = Constants.LibertyGreen });
+                _screenShake = 14f;
+                TriggerMissionNotification("¡COLMENA ERRADICADA!", $"SE CONFIRMARON {_campaign.KillsRequired} BAJAS ENEMIGAS", Constants.LibertyGreen);
+                SetVoiceAlert("SUPER TIERRA: ÁREA LIMPIA. EXTRACCIÓN AUTORIZADA.");
+            }
+        }
+        else if (_campaign.Mission.Type == MissionType.ExtractSamples)
+        {
+            for (int s = 0; s < _campaign.SampleContainers.Count; s++)
+            {
+                Vector2 scPos = _campaign.SampleContainers[s];
+                if (s < _campaign.SamplesCollected.Count && !_campaign.SamplesCollected[s] && Vector2.Distance(_player.Position, scPos) < 55f)
+                {
+                    _campaign.SamplesCollected[s] = true;
+                    _save.Samples += 2;
+                    _sound.PlayDeflect();
+                    for (int p = 0; p < 14; p++)
+                    {
+                        float ang = p * (MathF.PI * 2f / 14f);
+                        _particles.Add(new Particle
+                        {
+                            Position = scPos,
+                            Velocity = new Vector2(MathF.Cos(ang), MathF.Sin(ang)) * 90f,
+                            Color = Constants.TacticalCyan,
+                            Life = 0.45f,
+                            MaxLife = 0.45f,
+                            Radius = 3f
+                        });
+                    }
+                    int currentCount = _campaign.SamplesCollected.Count(c => c);
+                    SetVoiceAlert($"MUESTRAS RARAS OBTENIDAS: {currentCount}/{_campaign.SampleContainers.Count}");
+                }
+            }
+
+            int collected = _campaign.SamplesCollected.Count(c => c);
+            if (collected >= _campaign.SampleContainers.Count && !_extractionAvailable)
+            {
+                _extractionAvailable = true;
+                _campaign.Mission.Completed = true;
+                _shockwaves.Add(new ShockwaveRing { Position = _player.Position, MaxRadius = 420f, Speed = 600f, Life = 0.55f, Color = Constants.TacticalCyan });
+                TriggerMissionNotification("¡MUESTRAS RECOLECTADAS!", "RECURSOS CIENTÍFICOS ASEGURADOS // EXTRACCIÓN DISPONIBLE", Constants.TacticalCyan);
+                SetVoiceAlert("SUPER TIERRA: MUESTRAS ASEGURADAS. PROCEDA A LA EXTRACCIÓN.");
+            }
+        }
+        else if (_campaign.Mission.Type == MissionType.HoldTheLine)
+        {
+            float distToRelay = Vector2.Distance(_player.Position, _campaign.DefensePos);
+            // Defensa activa si el jugador está en el perímetro (250m)
+            if (distToRelay < 250f)
+            {
+                _campaign.DefenseTimer += dt;
+            }
+
+            // Daño al relé si enemigos se aproximan demasiado (a menos de 75px)
+            foreach (var en in _enemies)
+            {
+                if (Vector2.Distance(en.Position, _campaign.DefensePos) < 75f)
+                {
+                    _campaign.DefenseStationHp -= dt * 14f;
+                    if (_campaign.DefenseStationHp < 0) _campaign.DefenseStationHp = 0;
+                }
+            }
+
+            if (_campaign.DefenseTimer >= _campaign.MaxDefenseTimer && !_extractionAvailable)
+            {
+                _extractionAvailable = true;
+                _campaign.Mission.Completed = true;
+                _shockwaves.Add(new ShockwaveRing { Position = _campaign.DefensePos, MaxRadius = 480f, Speed = 650f, Life = 0.65f, Color = Constants.SuperEarthYellow });
+                _screenShake = 16f;
+                TriggerMissionNotification("¡LÍNEA DEFENSA EXITOSA!", "TRANSMISIÓN AL 100% // TRANSPORTE PELICAN-1 DISPONIBLE", Constants.SuperEarthYellow);
+                SetVoiceAlert("SUPER TIERRA: TRANSMISIÓN COMPLETADA. PELICAN-1 EN APROXIMACIÓN.");
+            }
+        }
+        else if (_campaign.Mission.Type == MissionType.SabotageFactory)
+        {
+            bool allSabotaged = true;
+            foreach (var node in _campaign.SabotageNodes)
+            {
+                if (!node.Completed)
+                {
+                    allSabotaged = false;
+                    float dist = Vector2.Distance(_player.Position, node.Position);
+                    if (dist < 65f)
+                    {
+                        node.Active = true;
+                        node.Progress += dt * 0.95f;
+                        if (node.Progress >= node.MaxProgress)
+                        {
+                            node.Completed = true;
+                            node.Active = false;
+                            _sound.PlayExplosion("orbital");
+                            _screenShake = 16f;
+                            _explosions.Add(new ExplosionInstance { Position = node.Position, Type = "orbital", Radius = 150f, Duration = 0.75f });
+                            _shockwaves.Add(new ShockwaveRing { Position = node.Position, MaxRadius = 380f, Speed = 600f, Life = 0.55f, Color = Constants.AutomatonRed });
+                            SetVoiceAlert($"NODO INDUSTRIAL #{node.Id} DESTRUIDO");
+                        }
+                    }
+                    else
+                    {
+                        node.Active = false;
+                    }
+                }
+            }
+
+            if (allSabotaged && !_extractionAvailable)
+            {
+                _extractionAvailable = true;
+                _campaign.Mission.Completed = true;
+                _shockwaves.Add(new ShockwaveRing { Position = _player.Position, MaxRadius = 450f, Speed = 650f, Life = 0.65f, Color = Constants.AutomatonRed });
+                TriggerMissionNotification("¡FABRICA SABOTEADA!", "COMPLEJO INDUSTRIAL ENEMIGO COMPLETAMENTE COLAPSADO", Constants.AutomatonRed);
+                SetVoiceAlert("SUPER TIERRA: FÁBRICA DESTRUIDA. EVACUEN LA ZONA.");
             }
         }
 
@@ -617,20 +876,32 @@ public static class Program
                 if (_campaign.Planet.Faction == Faction.Terminids)
                 {
                     double roll = _rnd.NextDouble();
-                    if (roll < 0.45) type = EnemyType.Scavenger;
-                    else if (roll < 0.70) type = EnemyType.Warrior;
-                    else if (roll < 0.85) type = EnemyType.Hunter;
-                    else if (roll < 0.94) type = EnemyType.Spitter;
+                    if (roll < 0.40) type = EnemyType.Scavenger;
+                    else if (roll < 0.65) type = EnemyType.Warrior;
+                    else if (roll < 0.82) type = EnemyType.Hunter;
+                    else if (roll < 0.93) type = EnemyType.Spitter;
                     else type = EnemyType.Charger;
                 }
-                else // Automatons
+                else if (_campaign.Planet.Faction == Faction.Illuminate)
                 {
                     double roll = _rnd.NextDouble();
-                    if (roll < 0.35) type = EnemyType.Trooper;
+                    if (roll < 0.32) type = EnemyType.Watcher;
+                    else if (roll < 0.58) type = EnemyType.Outcast;
+                    else if (roll < 0.78) type = EnemyType.Tripod;
+                    else if (roll < 0.93) type = EnemyType.Illusionist;
+                    else type = EnemyType.CouncilMember;
+                }
+                else // Automatons & Cyborgs
+                {
+                    double roll = _rnd.NextDouble();
+                    if (roll < 0.25) type = EnemyType.Trooper;
+                    else if (roll < 0.38) type = EnemyType.Hound;
                     else if (roll < 0.50) type = EnemyType.Commissar;
-                    else if (roll < 0.72) type = EnemyType.Berserker;
-                    else if (roll < 0.88) type = EnemyType.Devastator;
-                    else type = EnemyType.Hulk;
+                    else if (roll < 0.66) type = EnemyType.Berserker;
+                    else if (roll < 0.80) type = EnemyType.Butcher;
+                    else if (roll < 0.91) type = EnemyType.Devastator;
+                    else if (roll < 0.97) type = EnemyType.Hulk;
+                    else type = EnemyType.Warlord;
                 }
 
                 _enemies.Add(Enemy.Create(type, _campaign.Planet.Faction, spawnPos));
@@ -638,7 +909,13 @@ public static class Program
 
             if (_rnd.NextDouble() < 0.35)
             {
-                SetVoiceAlert(_campaign.Planet.Faction == Faction.Terminids ? "☣️ ¡BRECHA DE INSECTOS DETECTADA!" : "⚠️ ¡NAVE DE TRANSPORTE AUTÓMATA DETECTADA!");
+                string alertMsg = _campaign.Planet.Faction switch
+                {
+                    Faction.Terminids => "☣️ ¡BRECHA DE INSECTOS DETECTADA!",
+                    Faction.Illuminate => "🔮 ¡FISURA DIMENSIONAL ILUMINADA DETECTADA!",
+                    _ => "⚠️ ¡NAVE DE TRANSPORTE AUTÓMATA DETECTADA!"
+                };
+                SetVoiceAlert(alertMsg);
             }
         }
     }
@@ -726,7 +1003,83 @@ public static class Program
                         string hitText = $"{(int)finalDamage}";
                         Color numColor = Color.White;
 
-                        if (enemy.Type == EnemyType.Charger)
+                        // Absorción de barrera de escudo de energía (The Illuminate & shielded units)
+                        if (enemy.ShieldHp > 0)
+                        {
+                            enemy.ShieldRechargeTimer = 5.0f;
+                            float sDmg = bullet.Damage;
+                            if (bullet.Type == BulletType.Railgun) sDmg *= 1.5f;
+                            if (bullet.Type == BulletType.QuasarPlasma) sDmg *= 1.8f;
+
+                            if (enemy.ShieldHp >= sDmg)
+                            {
+                                enemy.ShieldHp -= sDmg;
+                                finalDamage = 0;
+                                hitText = $"ESCUDO -{(int)sDmg}";
+                                numColor = Constants.IlluminateCyan;
+                                _sound.PlayDeflect();
+                            }
+                            else
+                            {
+                                float overkill = sDmg - enemy.ShieldHp;
+                                enemy.ShieldHp = 0;
+                                finalDamage = overkill;
+                                hitText = "¡ESCUDO ROTO!";
+                                numColor = Constants.IlluminateMagenta;
+                                crit = true;
+                                _sound.PlayCrit();
+                                _shockwaves.Add(new ShockwaveRing
+                                {
+                                    Position = enemy.Position,
+                                    MaxRadius = 90f,
+                                    Speed = 380f,
+                                    Life = 0.28f,
+                                    Color = Constants.IlluminateMagenta
+                                });
+                            }
+                            deflected = false;
+                        }
+                        else if (bullet.Type == BulletType.Railgun)
+                        {
+                            // Acelerador magnético atraviesa blindaje frontal
+                            deflected = false;
+                            finalDamage = bullet.Damage;
+                            crit = true;
+                            hitText = "SABOT CRÍTICO!";
+                            numColor = Constants.TacticalCyan;
+                            _sound.PlayCrit();
+                        }
+                        else if (bullet.Type == BulletType.Flame)
+                        {
+                            // Napalm ignora blindaje y quema de forma continua
+                            deflected = false;
+                            finalDamage = bullet.Damage;
+                            hitText = "IGNICIÓN";
+                            numColor = Constants.FlameOrange;
+                        }
+                        else if (bullet.Type == BulletType.Autocannon)
+                        {
+                            // Impacto balístico pesado con onda explosiva 20mm
+                            deflected = false;
+                            finalDamage = bullet.Damage;
+                            hitText = "20mm HE!";
+                            numColor = Constants.Gold;
+                            _explosions.Add(new ExplosionInstance { Position = bullet.Position, Type = "autocannon", Radius = 65f, Duration = 0.4f });
+                            _screenShake += 3f;
+                        }
+                        else if (bullet.Type == BulletType.QuasarPlasma)
+                        {
+                            // Detonación masiva de plasma cuántico
+                            deflected = false;
+                            finalDamage = bullet.Damage;
+                            crit = true;
+                            hitText = "PLASMA CUÁNTICO!";
+                            numColor = Constants.TacticalCyan;
+                            _explosions.Add(new ExplosionInstance { Position = bullet.Position, Type = "quasar", Radius = 95f, Duration = 0.55f });
+                            _shockwaves.Add(new ShockwaveRing { Position = bullet.Position, MaxRadius = 180f, Speed = 500f, Life = 0.35f, Color = Constants.TacticalCyan });
+                            _screenShake += 6f;
+                        }
+                        else if (enemy.Type == EnemyType.Charger)
                         {
                             if (angleDiff < MathF.PI / 2.2f)
                             {
@@ -768,11 +1121,47 @@ public static class Program
                                 _sound.PlayCrit();
                             }
                         }
+                        else if (enemy.Type == EnemyType.Warlord)
+                        {
+                            if (angleDiff < MathF.PI / 2.0f)
+                            {
+                                // Blindaje frontal pesado de dreadnought
+                                deflected = true;
+                                finalDamage = 0;
+                                hitText = "DREADNOUGHT";
+                                numColor = Color.LightGray;
+                                _sound.PlayDeflect();
+                            }
+                            else if (angleDiff > MathF.PI * 0.62f)
+                            {
+                                // Rejillas de ventilación y escapes térmicos traseros
+                                crit = true;
+                                finalDamage *= 2.5f;
+                                hitText = "CRÍTICO MOTOR!";
+                                numColor = Constants.DemocracyRed;
+                                _sound.PlayCrit();
+                            }
+                        }
+                        else if (enemy.Type == EnemyType.Butcher)
+                        {
+                            if (angleDiff < MathF.PI / 3.0f)
+                            {
+                                // Machetes pesados deflectan disparos frontales
+                                deflected = true;
+                                finalDamage *= 0.35f;
+                                hitText = "PARADA";
+                                numColor = Color.LightGray;
+                                _sound.PlayDeflect();
+                            }
+                        }
 
                         enemy.Hp -= finalDamage;
                         enemy.HitFlashTimer = 0.12f;
 
                         // Spawn spark / blood particles
+                        Color sparkCol = deflected ? Constants.Gold :
+                                         (enemy.Faction == Faction.Terminids ? Constants.OrangeHazard :
+                                         (enemy.Faction == Faction.Illuminate ? Constants.IlluminateMagenta : Constants.Cyan));
                         for (int p = 0; p < (deflected ? 4 : 7); p++)
                         {
                             _particles.Add(new Particle
@@ -780,7 +1169,7 @@ public static class Program
                                 Position = bullet.Position,
                                 Velocity = new Vector2((float)_rnd.NextDouble() * 6f - 3f, (float)_rnd.NextDouble() * 6f - 3f),
                                 Radius = (float)_rnd.NextDouble() * 2f + 1f,
-                                Color = deflected ? Constants.Gold : (enemy.Faction == Faction.Terminids ? Constants.OrangeHazard : Constants.Cyan),
+                                Color = sparkCol,
                                 Life = 0.25f
                             });
                         }
@@ -816,6 +1205,18 @@ public static class Program
                     _player.TakeDamage(dmg);
 
                     if (bullet.Type == BulletType.Acid) _sound.PlayAcid();
+                    else if (bullet.Type == BulletType.PsionicOrb || bullet.Type == BulletType.PsionicBeam)
+                    {
+                        _sound.PlayCrit();
+                        _shockwaves.Add(new ShockwaveRing
+                        {
+                            Position = _player.Position,
+                            MaxRadius = 60f,
+                            Speed = 280f,
+                            Life = 0.22f,
+                            Color = Constants.IlluminateViolet
+                        });
+                    }
 
                     _bullets.RemoveAt(b);
                 }
@@ -826,17 +1227,31 @@ public static class Program
     private static void KillEnemy(Enemy e)
     {
         // Add XP and Samples chance
-        _save.AddXp(e.IsHvt ? 35 : (e.Type == EnemyType.Charger || e.Type == EnemyType.Hulk ? 20 : 5));
-        if (_rnd.NextDouble() < 0.12) _save.Samples++;
+        int xpReward = e.IsHvt ? 45 :
+                       (e.Type == EnemyType.Charger || e.Type == EnemyType.Hulk || e.Type == EnemyType.Warlord || e.Type == EnemyType.CouncilMember ? 25 :
+                       (e.Type == EnemyType.Tripod || e.Type == EnemyType.Illusionist || e.Type == EnemyType.Butcher ? 15 : 5));
+        _save.AddXp(xpReward);
+        if (_rnd.NextDouble() < 0.14) _save.Samples++;
+
+        // Tracker para misiones de Erradicación
+        if (_campaign.Mission.Type == MissionType.EradicateHive)
+        {
+            _campaign.CurrentKills++;
+        }
 
         // Add Splatter Decal
+        Color splatBg = e.Faction == Faction.Terminids ? new Color(202, 138, 4, 180) :
+                        (e.Faction == Faction.Illuminate ? new Color(76, 29, 149, 200) : new Color(15, 23, 42, 200));
+        Color splatAcc = e.Faction == Faction.Terminids ? Constants.OrangeHazard :
+                         (e.Faction == Faction.Illuminate ? Constants.IlluminateCyan : Constants.DemocracyRed);
+
         var decal = new SplatterDecal
         {
             Position = e.Position,
             Radius = e.Radius * 1.3f,
             IsBots = e.Faction == Faction.Automatons,
-            Color = e.Faction == Faction.Terminids ? new Color(202, 138, 4, 180) : new Color(15, 23, 42, 200),
-            AccentColor = e.Faction == Faction.Terminids ? Constants.OrangeHazard : Constants.DemocracyRed
+            Color = splatBg,
+            AccentColor = splatAcc
         };
         for (int i = 0; i < 6; i++)
         {
@@ -857,10 +1272,37 @@ public static class Program
         }
 
         // Battlefield Debris for heavy bots
-        if (e.Type == EnemyType.Hulk || e.Type == EnemyType.FactoryStrider)
+        if (e.Type == EnemyType.Hulk || e.Type == EnemyType.FactoryStrider || e.Type == EnemyType.Warlord)
         {
             _debrisList.Add(new BattlefieldDebris { Position = e.Position, Radius = e.Radius, IsBots = true });
             _screenShake += 6f;
+        }
+
+        // Illuminate death psionic dissipation burst
+        if (e.Faction == Faction.Illuminate)
+        {
+            _shockwaves.Add(new ShockwaveRing
+            {
+                Position = e.Position,
+                MaxRadius = e.Radius * 3.2f,
+                Speed = 380f,
+                Life = 0.32f,
+                Color = Constants.IlluminateViolet
+            });
+            for (int p = 0; p < 10; p++)
+            {
+                float ang = (float)_rnd.NextDouble() * MathF.PI * 2f;
+                float spd = (float)_rnd.NextDouble() * 110f + 35f;
+                _particles.Add(new Particle
+                {
+                    Position = e.Position,
+                    Velocity = new Vector2(MathF.Cos(ang), MathF.Sin(ang)) * spd,
+                    Radius = (float)_rnd.NextDouble() * 3f + 1.5f,
+                    Color = (float)_rnd.NextDouble() > 0.5f ? Constants.IlluminateMagenta : Constants.IlluminateCyan,
+                    Life = 0.35f,
+                    MaxLife = 0.35f
+                });
+            }
         }
     }
 
@@ -873,8 +1315,42 @@ public static class Program
             air.Timer -= dt;
             if (air.Timer <= 0)
             {
-                _sound.PlayExplosion();
-                _screenShake += 16f;
+                if (air.Type.StartsWith("sentry"))
+                {
+                    _sound.PlayDeflect();
+                    _screenShake += 14f;
+                    _turrets.Add(new TurretInstance
+                    {
+                        Position = air.Position,
+                        Duration = air.Type.Contains("auto") ? 28f : 24f,
+                        MaxDuration = air.Type.Contains("auto") ? 28f : 24f,
+                        FireRate = air.Type.Contains("auto") ? 0.55f : 0.08f,
+                        Range = air.Type.Contains("auto") ? 550f : 420f,
+                        Type = air.Type.Contains("auto") ? "autocannon" : "gatling"
+                    });
+                    _airstrikes.RemoveAt(i);
+                    continue;
+                }
+
+                if (air.Type == "500kg")
+                {
+                    _sound.PlayExplosion500kg();
+                    _screenShake += 28f;
+                }
+                else
+                {
+                    _sound.PlayExplosion();
+                    _screenShake += 16f;
+                }
+
+                _explosions.Add(new ExplosionInstance
+                {
+                    Position = air.Position,
+                    Timer = 0f,
+                    Duration = air.Type == "500kg" ? 1.8f : 0.85f,
+                    Type = air.Type,
+                    Radius = air.Radius
+                });
 
                 // Massive AoE damage
                 float dmg = air.Type == "500kg" ? 1600f : 1000f;
@@ -913,6 +1389,16 @@ public static class Program
             }
         }
 
+        // Update Active Pixel-Art Explosions
+        for (int i = _explosions.Count - 1; i >= 0; i--)
+        {
+            _explosions[i].Timer += dt;
+            if (_explosions[i].Finished)
+            {
+                _explosions.RemoveAt(i);
+            }
+        }
+
         // Turrets
         for (int i = _turrets.Count - 1; i >= 0; i--)
         {
@@ -936,7 +1422,7 @@ public static class Program
                 if (t.Cooldown <= 0)
                 {
                     t.Cooldown = t.FireRate;
-                    _sound.PlayShoot(t.Type == "autocannon" ? "plasma" : "ar");
+                    _sound.PlayShoot(t.Type == "autocannon" ? "autocannon" : "ar");
 
                     _bullets.Add(new Bullet
                     {
@@ -1038,6 +1524,12 @@ public static class Program
         Raylib.BeginDrawing();
         Raylib.ClearBackground(Constants.TerminalBg);
 
+        // Fondo cósmico del planeta en 3D procedural para menús del destructor
+        if (_state != GameState.Playing && _state != GameState.Paused && _state != GameState.GameOver)
+        {
+            AssetGenerator.DrawCinematicPlanetBackdrop(_campaign.Planet.Name, (float)Raylib.GetTime(), Raylib.GetScreenWidth(), Raylib.GetScreenHeight(), Vector2.Zero, 0.88f, true);
+        }
+
         if (_state == GameState.Playing || _state == GameState.Paused)
         {
             DrawPlayingWorld();
@@ -1114,54 +1606,149 @@ public static class Program
         // 5. Active Turrets
         foreach (var t in _turrets)
         {
-            Raylib.DrawCircleV(t.Position, 16f, new Color(30, 41, 59, 255));
-            Raylib.DrawCircleLines((int)t.Position.X, (int)t.Position.Y, 16f, Constants.Gold);
-            Raylib.DrawLineEx(t.Position, t.Position + new Vector2(MathF.Cos(t.Angle), MathF.Sin(t.Angle)) * 24f, 4f, Constants.Gold);
+            float ammoRatio = t.MaxDuration > 0f ? (t.Duration / t.MaxDuration) : 1f;
+            bool isFiring = t.Cooldown > (t.FireRate * 0.45f);
+            ProceduralAssetRenderer.DrawSentryTurret(t.Position, t.Angle, t.Type, ammoRatio, isFiring, (float)Raylib.GetTime());
         }
 
         // 6. Orbital Lasers
         foreach (var ol in _orbitalLasers)
         {
-            Raylib.DrawCircleV(ol.Position, 45f, new Color(239, 68, 68, 80));
-            Raylib.DrawCircleV(ol.Position, 16f, Color.White);
-            Raylib.DrawCircleLines((int)ol.Position.X, (int)ol.Position.Y, 45f, Constants.DemocracyRed);
+            ProceduralAssetRenderer.DrawOrbitalLaser(ol.Position, (float)Raylib.GetTime());
         }
 
-        // 7. Airstrike Beacons & Impact Radius
+        // 7. Airstrike & Stratagem Delivery (Eagle-1, Hellpod, Beacon)
         foreach (var air in _airstrikes)
         {
-            Raylib.DrawCircleLines((int)air.Position.X, (int)air.Position.Y, air.Radius, Constants.DemocracyRed);
-            Raylib.DrawCircleV(air.Position, 8f, Constants.DemocracyRed);
-            Raylib.DrawText($"{air.Type.ToUpper()} {air.Timer:0.0}s", (int)air.Position.X - 25, (int)air.Position.Y - 24, 14, Constants.DemocracyRed);
+            ProceduralAssetRenderer.DrawInboundStratagemDelivery(air.Position, air.Type, air.Timer, air.MaxTimer, (float)Raylib.GetTime());
+        }
+
+        // 7.1 Active Pixel-Art Explosions (500kg Nuclear Mushroom & Orbital Blasts)
+        foreach (var exp in _explosions)
+        {
+            float prog = exp.Timer / exp.Duration;
+            if (exp.Type == "500kg")
+            {
+                AssetGenerator.Draw500kgExplosionSprite(exp.Position, prog);
+            }
+            else
+            {
+                ProceduralAssetRenderer.DrawEagle500kgExplosion(exp.Position, prog);
+            }
+        }
+
+        // 7.2 Anillos de Choque y Ondas Expansivas Cinéticas
+        foreach (var sw in _shockwaves)
+        {
+            float alpha = Math.Clamp(sw.Life / 0.6f, 0f, 1f);
+            Color swCol = new(sw.Color.R, sw.Color.G, sw.Color.B, (int)(alpha * 220));
+            Color swGlow = new(sw.Color.R, sw.Color.G, sw.Color.B, (int)(alpha * 90));
+            Raylib.DrawCircleLines((int)sw.Position.X, (int)sw.Position.Y, sw.Radius, swCol);
+            if (sw.Radius > 4f)
+            {
+                Raylib.DrawCircleLines((int)sw.Position.X, (int)sw.Position.Y, sw.Radius - 2f, swGlow);
+                Raylib.DrawCircleLines((int)sw.Position.X, (int)sw.Position.Y, sw.Radius + 2f, swGlow);
+            }
+        }
+
+        // 7.3 Descenso Cinemático de Hellpod Orbital
+        if (_activeHellpod != null)
+        {
+            if (!_activeHellpod.Landed)
+            {
+                // Sombra en el suelo que se agranda con la cercanía
+                float shadowRatio = Math.Clamp(1f - (_activeHellpod.Altitude / 1100f), 0.15f, 1f);
+                Raylib.DrawEllipse((int)_activeHellpod.TargetPos.X, (int)_activeHellpod.TargetPos.Y, (int)(22 * shadowRatio), (int)(11 * shadowRatio), new Color(0, 0, 0, (int)(160 * shadowRatio)));
+                // Dibujo de Hellpod en picada vertical
+                Vector2 podPos = _activeHellpod.TargetPos + new Vector2(0, -_activeHellpod.Altitude);
+                ProceduralAssetRenderer.DrawHellpod(podPos, 1.3f, (float)Raylib.GetTime());
+                Raylib.DrawLineEx(podPos, podPos + new Vector2(0, -55), 4.5f, Constants.FlameOrange);
+                Raylib.DrawLineEx(podPos, podPos + new Vector2(0, -25), 2f, Color.White);
+            }
+            else
+            {
+                // Hellpod clavado en el suelo emitiendo vapor
+                float podAlpha = Math.Clamp(_activeHellpod.FadeTimer / 2.0f, 0f, 1f);
+                ProceduralAssetRenderer.DrawHellpod(_activeHellpod.TargetPos, 1.0f, (float)Raylib.GetTime());
+            }
         }
 
         // 8. Enemies
         foreach (var e in _enemies)
         {
             if (e.Hp <= 0) continue;
-            if (e.Faction == Faction.Terminids)
-                GameRenderer.DrawTerminid(e);
-            else
-                GameRenderer.DrawAutomaton(e);
+            EnemySpriteManager.DrawInGameEnemy(e);
         }
 
-        // 9. Helldiver Player
+        // 9. Helldiver Player (Cape + Body + Weapon)
+        float gameTime = (float)Raylib.GetTime();
+        Vector2 playerVel = _player.IsMoving ? new Vector2(MathF.Cos(_player.Angle), MathF.Sin(_player.Angle)) * _player.Speed : Vector2.Zero;
+        ProceduralAssetRenderer.UpdateAndDrawHelldiverCape(_player.Position, playerVel, _player.Angle, gameTime);
         GameRenderer.DrawPlayer(_player);
+        ProceduralAssetRenderer.DrawEquippedWeapon(_player.Position, _player.Angle, _player.CurrentWeapon.Key, _player.IsReloading ? 0.3f : 0f, _player.MuzzleFlash > 0, gameTime);
 
         // 10. Bullets & Projectiles
         foreach (var b in _bullets)
         {
-            Color bCol = b.Type switch
+            if (b.Type == BulletType.Railgun)
             {
-                BulletType.Laser => Constants.Cyan,
-                BulletType.Plasma => Constants.Cyan,
-                BulletType.Dominator => Constants.OrangeHazard,
-                BulletType.Acid => Constants.LibertyGreen,
-                BulletType.Flame => Constants.OrangeHazard,
-                BulletType.BotLaser => Constants.DemocracyRed,
-                _ => Constants.Gold
-            };
-            Raylib.DrawCircleV(b.Position, b.Type == BulletType.Plasma ? 5f : 3f, bCol);
+                // Rayo ionizado hipersónico con núcleo blanco brillante
+                Raylib.DrawLineEx(b.Position - b.Velocity * 0.9f, b.Position, 4.5f, Constants.TacticalCyan);
+                Raylib.DrawLineEx(b.Position - b.Velocity * 0.45f, b.Position, 2f, Color.White);
+                Raylib.DrawCircleV(b.Position, 4f, Color.White);
+            }
+            else if (b.Type == BulletType.Flame)
+            {
+                // Torrente de napalm vivo multicapa
+                float fSize = 6.5f + MathF.Sin(gameTime * 28f + b.Position.X * 0.1f) * 2.5f;
+                Raylib.DrawCircleV(b.Position, fSize, new Color(255, 120, 20, 190));
+                Raylib.DrawCircleV(b.Position, fSize * 0.55f, new Color(255, 230, 80, 240));
+            }
+            else if (b.Type == BulletType.Autocannon)
+            {
+                // Proyectil trazador pesado 20mm
+                Raylib.DrawLineEx(b.Position - b.Velocity * 0.55f, b.Position, 4f, Constants.FlameOrange);
+                Raylib.DrawCircleV(b.Position, 4.5f, Constants.Gold);
+                Raylib.DrawCircleV(b.Position, 2f, Color.White);
+            }
+            else if (b.Type == BulletType.QuasarPlasma)
+            {
+                // Orbe de plasma cuántico condensado con pulso lumínico
+                float qPulse = 1f + 0.25f * MathF.Sin(gameTime * 25f);
+                Raylib.DrawCircleV(b.Position, 9f * qPulse, new Color(56, 189, 248, 140));
+                Raylib.DrawCircleV(b.Position, 5.5f * qPulse, Constants.TacticalCyan);
+                Raylib.DrawCircleV(b.Position, 2.5f, Color.White);
+            }
+            else if (b.Type == BulletType.PsionicOrb)
+            {
+                // Orbe de energía psiónica de los Iluminados con pulso lumínico y núcleo blanco
+                float psiPulse = 1f + 0.3f * MathF.Sin(gameTime * 24f);
+                Raylib.DrawCircleV(b.Position, 10f * psiPulse, new Color(168, 85, 247, 120));
+                Raylib.DrawCircleV(b.Position, 6.5f * psiPulse, Constants.IlluminateMagenta);
+                Raylib.DrawCircleV(b.Position, 3f, Color.White);
+            }
+            else if (b.Type == BulletType.PsionicBeam)
+            {
+                // Haz lineal concentrado de distorsión psiónica
+                Raylib.DrawLineEx(b.Position - b.Velocity * 0.9f, b.Position, 5f, Constants.IlluminateMagenta);
+                Raylib.DrawLineEx(b.Position - b.Velocity * 0.5f, b.Position, 2.5f, Constants.IlluminateCyan);
+                Raylib.DrawCircleV(b.Position, 4f, Color.White);
+            }
+            else
+            {
+                Color bCol = b.Type switch
+                {
+                    BulletType.Laser => Constants.Cyan,
+                    BulletType.Plasma => Constants.Cyan,
+                    BulletType.Dominator => Constants.OrangeHazard,
+                    BulletType.Acid => Constants.LibertyGreen,
+                    BulletType.BotLaser => Constants.DemocracyRed,
+                    BulletType.PsionicOrb => Constants.IlluminateMagenta,
+                    BulletType.PsionicBeam => Constants.IlluminateCyan,
+                    _ => Constants.Gold
+                };
+                Raylib.DrawCircleV(b.Position, b.Type == BulletType.Plasma ? 5f : 3f, bCol);
+            }
         }
 
         // 11. Particles & Casings
@@ -1266,10 +1853,14 @@ public static class Program
         }
 
         // 2. Weapon Card & Ammo Indicator (Bottom Left)
-        Rectangle wRec = new(20, sh - 82, 230, 62);
+        Rectangle wRec = new(20, sh - 82, 280, 62);
         DrawTacticalPanel(wRec, Constants.BorderColor, new Color(15, 23, 42, 235));
         Raylib.DrawText(_player.CurrentWeapon.Name.ToUpper(), (int)wRec.X + 14, (int)wRec.Y + 10, 13, Constants.Gold);
         Raylib.DrawText(_player.CurrentWeapon.TypeLabel.ToUpper(), (int)wRec.X + 14, (int)wRec.Y + 26, 10, Constants.Cyan);
+
+        // Weapon preview on right of HUD card
+        Vector2 hudWeaponPos = new(wRec.X + 220, wRec.Y + 24);
+        ProceduralAssetRenderer.DrawWeaponPreview(_player.CurrentWeapon.Key, hudWeaponPos, 1.8f);
 
         if (_player.IsReloading)
         {
@@ -1288,13 +1879,18 @@ public static class Program
             // Magazine pip meter
             float ammoPct = Math.Clamp((float)_player.Ammo / _player.MaxAmmo, 0, 1);
             Color ammoMeterCol = ammoPct > 0.35f ? Constants.Gold : Constants.DemocracyRed;
-            Raylib.DrawRectangle((int)wRec.X + 115, (int)wRec.Y + 45, 100, 8, new Color(30, 41, 59, 255));
-            Raylib.DrawRectangle((int)wRec.X + 115, (int)wRec.Y + 45, (int)(100 * ammoPct), 8, ammoMeterCol);
-            Raylib.DrawRectangleLines((int)wRec.X + 115, (int)wRec.Y + 45, 100, 8, Color.DarkGray);
+            Raylib.DrawRectangle((int)wRec.X + 105, (int)wRec.Y + 45, 65, 8, new Color(30, 41, 59, 255));
+            Raylib.DrawRectangle((int)wRec.X + 105, (int)wRec.Y + 45, (int)(65 * ammoPct), 8, ammoMeterCol);
+            Raylib.DrawRectangleLines((int)wRec.X + 105, (int)wRec.Y + 45, 65, 8, Color.DarkGray);
+
+            if (_player.Ammo < _player.MaxAmmo)
+            {
+                Raylib.DrawText("[R] RECARGAR", (int)wRec.X + 176, (int)wRec.Y + 44, 9, Constants.Cyan);
+            }
         }
 
         // 3. Stratagems Cards (Bottom Center)
-        int stratWidth = 105;
+        int stratWidth = 118;
         int stratTotalW = 3 * stratWidth + 24;
         int stratStartX = sw / 2 - stratTotalW / 2;
 
@@ -1309,27 +1905,31 @@ public static class Program
             bool onCd = _stratagemCooldowns[i] > 0;
             DrawTacticalPanel(sRec, onCd ? Color.DarkGray : Constants.Gold, new Color(15, 23, 42, 235));
 
-            string keyText = $"[{i + 1}]";
-            Raylib.DrawText(keyText, bx + 8, by + 6, 11, Constants.Gold);
-            string sName = def != null ? def.Icon : "[---]";
-            Raylib.DrawText(sName, bx + 28, by + 6, 11, Color.White);
+            // Insignia táctica de la estratagema a la izquierda
+            Vector2 badgePos = new(bx + 24, by + 31);
+            ProceduralAssetRenderer.DrawStratagemBadge(stratId, badgePos, 34f, !onCd);
 
-            // D-Pad call-in arrows
+            string keyText = $"[{i + 1}]";
+            Raylib.DrawText(keyText, bx + 46, by + 6, 11, Constants.Gold);
+            string sName = def != null ? def.Icon : "[---]";
+            Raylib.DrawText(sName, bx + 66, by + 6, 11, Color.White);
+
+            // Flechas de código D-Pad
             string codeArrows = GetStratagemCode(stratId);
-            Raylib.DrawText(codeArrows, bx + (stratWidth - Raylib.MeasureText(codeArrows, 11)) / 2, by + 24, 11, Constants.Gold);
+            Raylib.DrawText(codeArrows, bx + 46, by + 22, 10, Constants.Gold);
 
             if (onCd)
             {
-                // Semi-transparent cooldown curtain
-                Raylib.DrawRectangleRec(sRec, new Color((byte)0, (byte)0, (byte)0, (byte)160));
+                // Cortina holográfica de recarga activa
+                Raylib.DrawRectangleRec(sRec, new Color(0, 0, 0, 150));
                 string cdStr = $"{_stratagemCooldowns[i]:0.0}s";
-                Raylib.DrawText(cdStr, bx + (stratWidth - Raylib.MeasureText(cdStr, 14)) / 2, by + 40, 14, Constants.DemocracyRed);
+                Raylib.DrawText(cdStr, bx + 46, by + 38, 13, Constants.DemocracyRed);
             }
             else
             {
                 string cat = def != null ? def.Category.ToUpper() : "LISTO";
-                if (cat.Length > 12) cat = cat.Substring(0, 12);
-                Raylib.DrawText(cat, bx + (stratWidth - Raylib.MeasureText(cat, 9)) / 2, by + 44, 9, Constants.LibertyGreen);
+                if (cat.Length > 9) cat = cat.Substring(0, 9);
+                Raylib.DrawText(cat, bx + 46, by + 40, 9, Constants.LibertyGreen);
             }
         }
 
@@ -1387,10 +1987,44 @@ public static class Program
         }
         foreach (var it in _campaign.Interactables)
         {
-            Vector2 rel = (it.Position - _player.Position) * mapScale;
+            if (!it.Completed)
+            {
+                Vector2 rel = (it.Position - _player.Position) * mapScale;
+                if (rel.Length() < mapR - 3)
+                {
+                    Raylib.DrawCircleV(radarCenter + rel, 3, Constants.Gold);
+                }
+            }
+        }
+        for (int s = 0; s < _campaign.SampleContainers.Count; s++)
+        {
+            if (s < _campaign.SamplesCollected.Count && !_campaign.SamplesCollected[s])
+            {
+                Vector2 rel = (_campaign.SampleContainers[s] - _player.Position) * mapScale;
+                if (rel.Length() < mapR - 3)
+                {
+                    Raylib.DrawCircleV(radarCenter + rel, 3f, Constants.TacticalCyan);
+                }
+            }
+        }
+        if (_campaign.Mission.Type == MissionType.HoldTheLine)
+        {
+            Vector2 rel = (_campaign.DefensePos - _player.Position) * mapScale;
             if (rel.Length() < mapR - 3)
             {
-                Raylib.DrawCircleV(radarCenter + rel, 3, it.Completed ? Constants.LibertyGreen : Constants.Gold);
+                Raylib.DrawCircleV(radarCenter + rel, 4f, Constants.SuperEarthYellow);
+                Raylib.DrawCircleLines((int)(radarCenter.X + rel.X), (int)(radarCenter.Y + rel.Y), 6f, Constants.SuperEarthYellow);
+            }
+        }
+        foreach (var sn in _campaign.SabotageNodes)
+        {
+            if (!sn.Completed)
+            {
+                Vector2 rel = (sn.Position - _player.Position) * mapScale;
+                if (rel.Length() < mapR - 3)
+                {
+                    Raylib.DrawCircleV(radarCenter + rel, 3.5f, Constants.AutomatonRed);
+                }
             }
         }
 
@@ -1423,7 +2057,7 @@ public static class Program
         Raylib.DrawText("RADAR TÁCTICO", (int)radarCenter.X - Raylib.MeasureText("RADAR TÁCTICO", 9) / 2, (int)radarCenter.Y + mapR + 6, 9, Constants.Cyan);
 
         // 5. Mission Banner (Top Center)
-        int bannerW = 460;
+        int bannerW = 490;
         Rectangle bRec = new(sw / 2 - bannerW / 2, 16, bannerW, 36);
         DrawTacticalPanel(bRec, _pelicanLanded ? Constants.LibertyGreen : Constants.BorderColor, new Color(15, 23, 42, 235));
 
@@ -1433,12 +2067,50 @@ public static class Program
             int remaining = _campaign.Outposts.Count(o => !o.Destroyed);
             objText += $" [{remaining} PUESTOS ACTIVOS]";
         }
+        else if (_campaign.Mission.Type == MissionType.EradicateHive)
+        {
+            objText = $"COLMENA HOSTIL: {_campaign.CurrentKills} / {_campaign.KillsRequired} BAJAS CONFIRMADAS";
+        }
+        else if (_campaign.Mission.Type == MissionType.ExtractSamples)
+        {
+            int sCount = _campaign.SamplesCollected.Count(c => c);
+            objText = $"MUESTRAS RARAS: {sCount} / {_campaign.SampleContainers.Count} EXTRAÍDAS";
+        }
+        else if (_campaign.Mission.Type == MissionType.HoldTheLine)
+        {
+            objText = $"DEFENSA DE RELÉ: {(int)_campaign.DefenseTimer}s / {(int)_campaign.MaxDefenseTimer}s | RELÉ: {(int)_campaign.DefenseStationHp} HP";
+        }
+        else if (_campaign.Mission.Type == MissionType.SabotageFactory)
+        {
+            int destroyed = _campaign.SabotageNodes.Count(n => n.Completed);
+            objText = $"SABOTAJE INDUSTRIAL: {destroyed} / {_campaign.SabotageNodes.Count} REACTORES DETONADOS";
+        }
         else if (_extractionActive)
         {
             objText = _pelicanLanded ? "¡PELICAN-1 EN TIERRA! ¡ABORDAD LA RAMPA!" : $"PELICAN-1 ATERRIZANDO EN: {_extractionTimer:0.0}s";
         }
         Color bannerTextCol = _pelicanLanded ? Constants.LibertyGreen : (_extractionActive ? Constants.OrangeHazard : Constants.Gold);
         Raylib.DrawText(objText, sw / 2 - Raylib.MeasureText(objText, 12) / 2, 28, 12, bannerTextCol);
+
+        // 5.1 Banner Cinemático de Misión / Notificación Épica
+        if (_missionBanner != null)
+        {
+            float prog = _missionBanner.Timer / _missionBanner.Duration;
+            float slide = prog < 0.12f ? (prog / 0.12f) : (prog > 0.88f ? (1f - (prog - 0.88f) / 0.12f) : 1f);
+            float yPos = -60f + slide * 140f;
+
+            int mbW = 620;
+            int mbH = 64;
+            Rectangle mbRec = new(sw / 2 - mbW / 2, yPos, mbW, mbH);
+            Raylib.DrawRectangleRec(mbRec, new Color(10, 16, 26, (int)(240 * slide)));
+            Raylib.DrawRectangleLinesEx(mbRec, 2, _missionBanner.PrimaryColor);
+
+            Raylib.DrawRectangle((int)mbRec.X, (int)mbRec.Y, 6, mbH, _missionBanner.PrimaryColor);
+            Raylib.DrawRectangle((int)(mbRec.X + mbRec.Width - 6), (int)mbRec.Y, 6, mbH, _missionBanner.PrimaryColor);
+
+            Raylib.DrawText(_missionBanner.Title, sw / 2 - Raylib.MeasureText(_missionBanner.Title, 16) / 2, (int)mbRec.Y + 12, 16, _missionBanner.PrimaryColor);
+            Raylib.DrawText(_missionBanner.Subtitle, sw / 2 - Raylib.MeasureText(_missionBanner.Subtitle, 11) / 2, (int)mbRec.Y + 36, 11, Color.White);
+        }
 
         // 6. Radio Alert Banner
         if (_radioAlertTimer > 0)
@@ -1460,26 +2132,7 @@ public static class Program
 
     private static void DrawHoloPlanet(Vector2 center, float radius, Faction faction)
     {
-        Color primary = faction == Faction.Automatons ? Constants.Cyan : Constants.OrangeHazard;
-        Color glow = faction == Faction.Automatons ? new Color((byte)56, (byte)189, (byte)248, (byte)35) : new Color((byte)249, (byte)115, (byte)22, (byte)35);
-
-        // Atmosphere glow
-        Raylib.DrawCircleV(center, radius + 8, glow);
-        Raylib.DrawCircleV(center, radius, new Color(10, 16, 28, 255));
-        Raylib.DrawCircleLines((int)center.X, (int)center.Y, radius, primary);
-
-        // Latitude lines
-        Raylib.DrawEllipseLines((int)center.X, (int)center.Y, (int)radius, (int)(radius * 0.35f), new Color((byte)primary.R, (byte)primary.G, (byte)primary.B, (byte)80));
-        Raylib.DrawEllipseLines((int)center.X, (int)(center.Y - radius * 0.45f), (int)(radius * 0.85f), (int)(radius * 0.22f), new Color((byte)primary.R, (byte)primary.G, (byte)primary.B, (byte)50));
-        Raylib.DrawEllipseLines((int)center.X, (int)(center.Y + radius * 0.45f), (int)(radius * 0.85f), (int)(radius * 0.22f), new Color((byte)primary.R, (byte)primary.G, (byte)primary.B, (byte)50));
-
-        // Rotating longitude arc
-        float t = (float)Raylib.GetTime() * 0.7f;
-        float longW = radius * MathF.Abs(MathF.Cos(t));
-        Raylib.DrawEllipseLines((int)center.X, (int)center.Y, (int)Math.Max(longW, 3f), (int)radius, new Color((byte)primary.R, (byte)primary.G, (byte)primary.B, (byte)110));
-
-        // Equatorial tilt line
-        Raylib.DrawLineEx(new Vector2(center.X - radius - 6, center.Y + 12), new Vector2(center.X + radius + 6, center.Y - 12), 1f, new Color((byte)primary.R, (byte)primary.G, (byte)primary.B, (byte)60));
+        AssetGenerator.DrawGalacticHoloPlanet(center, radius, _campaign.Planet.Name, (float)Raylib.GetTime());
     }
 
     private static void DrawWarTableMenu()
@@ -1547,32 +2200,40 @@ public static class Program
         Raylib.DrawText(_campaign.Mission.Title.ToUpper(), (int)objBox.X + 12, (int)objBox.Y + 34, 14, Constants.LibertyGreen);
         Raylib.DrawText(_campaign.Mission.Description, (int)objBox.X + 12, (int)objBox.Y + 58, 11, Color.LightGray);
 
-        // Buttons
+        // Botón principal de despliegue en combate
         Vector2 mouse = Raylib.GetMousePosition();
 
-        Rectangle btnPlay = new(cx - 150, 480, 300, 50);
+        Rectangle btnPlay = new(cx - 190, 470, 380, 52);
         bool hoverPlay = Raylib.CheckCollisionPointRec(mouse, btnPlay);
         Raylib.DrawRectangleRec(btnPlay, hoverPlay ? Constants.Gold : Constants.SuperEarthYellow);
         Raylib.DrawRectangleLinesEx(btnPlay, 2, Color.White);
-        string playTxt = hoverPlay ? ">>> DESPLEGAR EN COMBATE <<<" : "DESPLEGAR EN MISIÓN";
-        Raylib.DrawText(playTxt, cx - Raylib.MeasureText(playTxt, 16) / 2, (int)btnPlay.Y + 17, 16, Color.Black);
+        string playTxt = hoverPlay ? ">>> DESPLEGAR EN COMBATE <<<" : "★ DESPLEGAR EN MISIÓN ★";
+        Raylib.DrawText(playTxt, cx - Raylib.MeasureText(playTxt, 16) / 2, (int)btnPlay.Y + 18, 16, Color.Black);
 
-        // Sub buttons row 1
-        Rectangle btnArmory = new(cx - 280, 545, 175, 42);
-        Rectangle btnStrat = new(cx - 90, 545, 175, 42);
-        Rectangle btnHangar = new(cx + 100, 545, 175, 42);
+        // Barra Táctica Inferior (Dock Horizontal Unificado)
+        Raylib.DrawRectangle(0, sh - 70, sw, 70, new Color(10, 16, 26, 240));
+        Raylib.DrawLine(0, sh - 70, sw, sh - 70, Constants.BorderColor);
 
-        DrawButton(btnArmory, "ARMERÍA", Raylib.CheckCollisionPointRec(mouse, btnArmory));
-        DrawButton(btnStrat, "ESTRATAGEMAS", Raylib.CheckCollisionPointRec(mouse, btnStrat));
-        DrawButton(btnHangar, "HANGAR NAVE", Raylib.CheckCollisionPointRec(mouse, btnHangar));
+        int btnW = 180;
+        int btnH = 44;
+        int btnGap = 12;
+        int totalDockW = 6 * btnW + 5 * btnGap;
+        int startX = cx - totalDockW / 2;
+        int dockY = sh - 58;
 
-        // Sub buttons row 2
-        Rectangle btnReroll = new(cx - 280, 600, 175, 38);
-        Rectangle btnBestiary = new(cx - 90, 600, 175, 38);
-        Rectangle btnSettings = new(cx + 100, 600, 175, 38);
-        DrawButton(btnReroll, "CAMBIAR PLANETA", Raylib.CheckCollisionPointRec(mouse, btnReroll));
-        DrawButton(btnBestiary, "BESTIARIO", Raylib.CheckCollisionPointRec(mouse, btnBestiary));
-        DrawButton(btnSettings, "AJUSTES", Raylib.CheckCollisionPointRec(mouse, btnSettings));
+        Rectangle btnReroll   = new(startX + 0 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnArmory   = new(startX + 1 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnStrat    = new(startX + 2 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnHangar   = new(startX + 3 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnBestiary = new(startX + 4 * (btnW + btnGap), dockY, btnW, btnH);
+        Rectangle btnSettings = new(startX + 5 * (btnW + btnGap), dockY, btnW, btnH);
+
+        DrawButton(btnReroll,   "🎲 CAMBIAR PLANETA", Raylib.CheckCollisionPointRec(mouse, btnReroll));
+        DrawButton(btnArmory,   "🔫 ARMERÍA",         Raylib.CheckCollisionPointRec(mouse, btnArmory));
+        DrawButton(btnStrat,    "📡 ESTRATAGEMAS",    Raylib.CheckCollisionPointRec(mouse, btnStrat));
+        DrawButton(btnHangar,   "🚀 HANGAR NAVE",     Raylib.CheckCollisionPointRec(mouse, btnHangar));
+        DrawButton(btnBestiary, "👾 BESTIARIO",       Raylib.CheckCollisionPointRec(mouse, btnBestiary));
+        DrawButton(btnSettings, "⚙️ AJUSTES",         Raylib.CheckCollisionPointRec(mouse, btnSettings));
     }
 
     private static void DrawButton(Rectangle rec, string text, bool hover)
@@ -1593,36 +2254,67 @@ public static class Program
         Raylib.DrawText(text, (int)rec.X + (int)rec.Width / 2 - Raylib.MeasureText(text, 12) / 2, (int)rec.Y + 14, 12, hover ? Constants.Gold : Color.White);
     }
 
+    private static (string Caliber, string PenTier, Color PenColor) GetWeaponMilitarySpecs(string key) => key.ToLowerInvariant() switch
+    {
+        "liberator"    => ("5.56x45mm NATO AP", "PEN: LIGERA TIER 1", Constants.Cyan),
+        "breaker"      => ("12-GAUGE MAGNUM FLECHETTE", "PEN: LIGERA // IMPACTO", Constants.Cyan),
+        "punisher"     => ("10-GAUGE HEAVY SLUG", "PEN: MEDIA // ATURDIMIENTO", Constants.OrangeHazard),
+        "sickle"       => ("DISIPADOR TÉRMICO FUSIÓN", "PEN: LIGERA // CALOR", Constants.Cyan),
+        "dominator"    => ("20mm GYRO-JET HE COHETE", "PEN: PESADA // ANTIBLINDADOS", Constants.DemocracyRed),
+        "diligence"    => ("7.62x51mm AP SABOT", "PEN: MEDIA // PERFORANTE x2", Constants.OrangeHazard),
+        "scorcher"     => ("PLASMA IONIZADO TÉRMICO", "PEN: EXPLOSIVA // RADIO ÁREA", Constants.DemocracyRed),
+        "flamethrower" => ("NAPALM GELATINIZADO 1200°C", "PEN: ÍGNEA // IGNORA BLINDAJE", Constants.FlameOrange),
+        "autocannon"   => ("20x138mmB ALTO EXPLOSIVO", "PEN: PESADA ANTI-MATERIEL", Constants.DemocracyRed),
+        "railgun"      => ("PROYECTIL FERROMAGNÉTICO SABOT", "PEN: TITÁN TIER ULTRA", Constants.TacticalCyan),
+        "quasar"       => ("CAÑÓN DE ENERGÍA CUÁNTICA", "PEN: PLASMA DESTRUCTOR", Constants.TacticalCyan),
+        _              => ("CALIBRE ESTÁNDAR", "PEN: ESTÁNDAR", Color.White)
+    };
+
     private static void UpdateArmory()
     {
         if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _state = GameState.Menu; return; }
 
         Vector2 mouse = Raylib.GetMousePosition();
         int sw = Raylib.GetScreenWidth();
-        int cx = sw / 2;
+        int sh = Raylib.GetScreenHeight();
 
-        // Back button
-        Rectangle btnBack = new(cx - 100, 640, 200, 42);
+        // Botón Volver al Puente
+        Rectangle btnBack = new(35, sh - 58, 220, 42);
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, btnBack))
         {
             _state = GameState.Menu;
             return;
         }
 
-        // Weapon cards selection
         var weapons = WeaponRegistry.Weapons.Values.ToList();
+        
+        // Columna Izquierda: Selección de cartas de armas (2 columnas x 6 filas)
         for (int i = 0; i < weapons.Count; i++)
         {
             int col = i % 2;
             int row = i / 2;
-            Rectangle cardRec = new(cx - 360 + col * 370, 110 + row * 125, 350, 115);
+            Rectangle cardRec = new(35 + col * 335, 95 + row * 88, 320, 80);
 
             if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, cardRec))
             {
-                _save.EquippedWeapon = weapons[i].Key;
+                _selectedArmoryIndex = i;
+                _sound.PlayDeflect();
+            }
+        }
+
+        // Panel Maestro Derecho: Botón Equipar Arma
+        if (_selectedArmoryIndex >= 0 && _selectedArmoryIndex < weapons.Count)
+        {
+            var selWeapon = weapons[_selectedArmoryIndex];
+            int panelX = sw - 540;
+            Rectangle btnEquip = new(panelX + 22, sh - 82, 505 - 44, 46);
+            if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, btnEquip))
+            {
+                _save.EquippedWeapon = selWeapon.Key;
                 _save.Save();
                 _player.Reset(_save);
-                _sound.PlayDeflect();
+                _player.CurrentWeapon.Damage = (int)(WeaponRegistry.GetWeapon(_save.EquippedWeapon).Damage * (1f + _save.Hangar.DamageLevel * 0.10f));
+                _sound.PlayReload();
             }
         }
     }
@@ -1641,58 +2333,132 @@ public static class Program
     private static void DrawArmory()
     {
         int sw = Raylib.GetScreenWidth();
-        int cx = sw / 2;
-
-        Raylib.DrawText("ARMERÍA DE LA SUPER TIERRA", cx - Raylib.MeasureText("ARMERÍA DE LA SUPER TIERRA", 26) / 2, 36, 26, Constants.Gold);
-        string sub = "SELECCIÓN DE ARMA REGLAMENTARIA Y BALÍSTICA TÁCTICA";
-        Raylib.DrawText(sub, cx - Raylib.MeasureText(sub, 12) / 2, 70, 12, Constants.Cyan);
-
-        var weapons = WeaponRegistry.Weapons.Values.ToList();
+        int sh = Raylib.GetScreenHeight();
+        float time = (float)Raylib.GetTime();
         Vector2 mouse = Raylib.GetMousePosition();
 
+        var weapons = WeaponRegistry.Weapons.Values.ToList();
+        if (_selectedArmoryIndex < 0 || _selectedArmoryIndex >= weapons.Count) _selectedArmoryIndex = 0;
+        var selectedWeapon = weapons[_selectedArmoryIndex];
+
+        // Header Title
+        Raylib.DrawText("ARMERÍA TÁCTICA // SUPER TIERRA", 35, 26, 24, Constants.Gold);
+        string sub = "SELECCIÓN DE ARSENAL BALÍSTICO, ENERGÉTICO Y EXPERIMENTAL";
+        Raylib.DrawText(sub, 35, 56, 11, Constants.Cyan);
+
+        // ==========================================
+        // 1. SELECTOR DE ARMAS (COLUMNA IZQUIERDA)
+        // ==========================================
         for (int i = 0; i < weapons.Count; i++)
         {
             var w = weapons[i];
             int col = i % 2;
             int row = i / 2;
-            Rectangle cardRec = new(cx - 360 + col * 370, 100 + row * 128, 350, 118);
+            Rectangle cardRec = new(35 + col * 335, 95 + row * 88, 320, 80);
 
             bool isEquipped = _save.EquippedWeapon == w.Key;
+            bool isSelected = _selectedArmoryIndex == i;
             bool hover = Raylib.CheckCollisionPointRec(mouse, cardRec);
 
-            Color cardBorder = isEquipped ? Constants.LibertyGreen : (hover ? Constants.Gold : Constants.BorderColor);
-            DrawTacticalPanel(cardRec, cardBorder, hover ? new Color(22, 33, 52, 255) : new Color(13, 20, 36, 245));
+            Color borderCol = isEquipped ? Constants.LibertyGreen : (isSelected ? Constants.SuperEarthYellow : (hover ? Constants.Gold : Constants.BorderColor));
+            Color bgCol = isSelected ? new Color(20, 32, 54, 250) : (hover ? new Color(16, 26, 44, 245) : new Color(11, 18, 32, 235));
 
-            // Weapon Title & Icon
-            Raylib.DrawText(w.Name.ToUpper(), (int)cardRec.X + 14, (int)cardRec.Y + 10, 13, isEquipped ? Constants.LibertyGreen : Constants.Gold);
+            DrawTacticalPanel(cardRec, borderCol, bgCol);
 
+            var (cal, pen, pCol) = GetWeaponMilitarySpecs(w.Key);
+
+            // Título
+            Color titleCol = isEquipped ? Constants.LibertyGreen : (isSelected ? Constants.SuperEarthYellow : Color.White);
+            Raylib.DrawText(w.Name.ToUpper(), (int)cardRec.X + 12, (int)cardRec.Y + 10, 12, titleCol);
+
+            // Calibre
+            Raylib.DrawText(cal, (int)cardRec.X + 12, (int)cardRec.Y + 28, 9, Constants.Cyan);
+
+            // Stats abreviados
+            string statSummary = $"DMG: {(int)w.Damage} | RPM: {w.Rpm} | CARG: {w.Ammo}";
+            Raylib.DrawText(statSummary, (int)cardRec.X + 12, (int)cardRec.Y + 45, 9, Color.LightGray);
+
+            // Mini Badge de Penetración
+            Raylib.DrawText(pen, (int)cardRec.X + 12, (int)cardRec.Y + 62, 8, pCol);
+
+            // Estado al costado derecho
             if (isEquipped)
             {
-                Raylib.DrawText("[✓ EQUIPADA]", (int)cardRec.X + (int)cardRec.Width - 92, (int)cardRec.Y + 10, 11, Constants.LibertyGreen);
+                Raylib.DrawText("✓ EQUIPADA", (int)(cardRec.X + cardRec.Width - 85), (int)cardRec.Y + 10, 10, Constants.LibertyGreen);
             }
-            else if (hover)
+            else if (isSelected)
             {
-                Raylib.DrawText("[CLIC EQUIPAR]", (int)cardRec.X + (int)cardRec.Width - 98, (int)cardRec.Y + 10, 10, Constants.Gold);
+                Raylib.DrawText("► SELECCIÓN", (int)(cardRec.X + cardRec.Width - 90), (int)cardRec.Y + 10, 10, Constants.SuperEarthYellow);
             }
 
-            // Stat Bars
-            int statX = (int)cardRec.X + 14;
-            int statY = (int)cardRec.Y + 28;
-            DrawStatBar(statX, statY, 320, 6, w.Damage / 275f, Constants.DemocracyRed, "DAÑO", $"{(int)w.Damage}");
-            DrawStatBar(statX, statY + 14, 320, 6, w.Rpm / 750f, Constants.OrangeHazard, "CADENCIA", $"{w.Rpm} RPM");
-            DrawStatBar(statX, statY + 28, 320, 6, (float)w.Ammo / 75f, Constants.Gold, "CARGADOR", $"{w.Ammo} DISP");
-
-            // Special trait pill
-            Rectangle traitPill = new(statX, statY + 46, Raylib.MeasureText(w.SpecialTrait, 10) + 14, 16);
-            Raylib.DrawRectangleRec(traitPill, new Color(20, 40, 65, 255));
-            Raylib.DrawRectangleLinesEx(traitPill, 1, Constants.Cyan);
-            Raylib.DrawText(w.SpecialTrait, (int)traitPill.X + 7, (int)traitPill.Y + 3, 10, Constants.Cyan);
-
-            // Description
-            Raylib.DrawText(w.Description, statX, statY + 68, 9, Color.Gray);
+            // Mini icono preview del arma
+            ProceduralAssetRenderer.DrawWeaponPreview(w.Key, new Vector2(cardRec.X + cardRec.Width - 45, cardRec.Y + 48), 1.4f);
         }
 
-        Rectangle btnBack = new(cx - 100, 640, 200, 42);
+        // ==========================================
+        // 2. MASTER SHOWCASE (PANEL DERECHO)
+        // ==========================================
+        int panelX = sw - 540;
+        int panelY = 95;
+        int panelW = 505;
+        int panelH = sh - 170;
+        Rectangle masterRec = new(panelX, panelY, panelW, panelH);
+
+        bool masterEquipped = _save.EquippedWeapon == selectedWeapon.Key;
+        Color masterBorder = masterEquipped ? Constants.LibertyGreen : Constants.Gold;
+        DrawTacticalPanel(masterRec, masterBorder, new Color(9, 15, 27, 245));
+
+        // Título del arma maestra
+        Raylib.DrawText(selectedWeapon.Name.ToUpper(), panelX + 22, panelY + 18, 20, Constants.Gold);
+        var (sCal, sPen, sPCol) = GetWeaponMilitarySpecs(selectedWeapon.Key);
+        Raylib.DrawText($"CALIBRE REGLAMENTARIO: {sCal}", panelX + 22, panelY + 44, 11, Constants.Cyan);
+
+        // Badge de penetración
+        Rectangle penBadge = new(panelX + 22, panelY + 62, Raylib.MeasureText(sPen, 10) + 16, 18);
+        Raylib.DrawRectangleRec(penBadge, new Color(18, 28, 48, 255));
+        Raylib.DrawRectangleLinesEx(penBadge, 1, sPCol);
+        Raylib.DrawText(sPen, (int)penBadge.X + 8, (int)penBadge.Y + 4, 10, sPCol);
+
+        // Trait especial
+        if (!string.IsNullOrEmpty(selectedWeapon.SpecialTrait))
+        {
+            Rectangle traitBadge = new(panelX + 40 + (int)penBadge.Width, panelY + 62, Raylib.MeasureText(selectedWeapon.SpecialTrait, 10) + 16, 18);
+            Raylib.DrawRectangleRec(traitBadge, new Color(28, 20, 48, 255));
+            Raylib.DrawRectangleLinesEx(traitBadge, 1, Constants.OrangeHazard);
+            Raylib.DrawText(selectedWeapon.SpecialTrait, (int)traitBadge.X + 8, (int)traitBadge.Y + 4, 10, Constants.OrangeHazard);
+        }
+
+        // Marco de Showcase Holográfico
+        Vector2 showcaseCenter = new(panelX + panelW * 0.5f, panelY + 180);
+        ProceduralAssetRenderer.DrawWeaponShowcase(selectedWeapon.Key, showcaseCenter, 3.8f, time, masterEquipped);
+
+        // Barras de estadísticas balísticas
+        int barY = panelY + 280;
+        int barW = panelW - 44;
+        DrawStatBar(panelX + 22, barY, barW, 6, selectedWeapon.Damage / 320f, Constants.DemocracyRed, "POTENCIA DE IMPACTO", $"{(int)selectedWeapon.Damage}");
+        DrawStatBar(panelX + 22, barY + 22, barW, 6, selectedWeapon.Rpm / 900f, Constants.OrangeHazard, "CADENCIA DE FUEGO", $"{selectedWeapon.Rpm} RPM");
+        DrawStatBar(panelX + 22, barY + 44, barW, 6, (float)selectedWeapon.Ammo / 85f, Constants.Gold, "CAPACIDAD CARGADOR", $"{selectedWeapon.Ammo} DISP");
+        DrawStatBar(panelX + 22, barY + 66, barW, 6, selectedWeapon.Pellets > 1 ? 0.9f : 0.45f, Constants.TacticalCyan, "DISPERSIÓN // ÁREA", selectedWeapon.Pellets > 1 ? $"{selectedWeapon.Pellets} PERDIGONES" : "ALINEADA");
+
+        // Lore y descripción militar
+        Rectangle descBox = new(panelX + 22, barY + 95, barW, 55);
+        Raylib.DrawRectangleRec(descBox, new Color(14, 22, 38, 255));
+        Raylib.DrawRectangleLinesEx(descBox, 1, Constants.BorderColor);
+        Raylib.DrawText(selectedWeapon.Description, (int)descBox.X + 10, (int)descBox.Y + 10, 10, Color.LightGray);
+
+        // Botón Equipar en el panel maestro
+        Rectangle btnEquip = new(panelX + 22, sh - 82, barW, 46);
+        bool hoverEquip = Raylib.CheckCollisionPointRec(mouse, btnEquip);
+        Color equipBg = masterEquipped ? new Color(15, 60, 35, 255) : (hoverEquip ? Constants.Gold : Constants.SuperEarthYellow);
+        Raylib.DrawRectangleRec(btnEquip, equipBg);
+        Raylib.DrawRectangleLinesEx(btnEquip, 2, masterEquipped ? Constants.LibertyGreen : Color.White);
+
+        string eqTxt = masterEquipped ? "[ ✓ ARMA ASIGNADA AL HELLDIVER ]" : (hoverEquip ? ">>> ASIGNAR A LA MISIÓN <<<" : "EQUIPAR ESTA ARMA");
+        Color eqCol = masterEquipped ? Constants.LibertyGreen : Color.Black;
+        Raylib.DrawText(eqTxt, (int)(btnEquip.X + btnEquip.Width * 0.5f - Raylib.MeasureText(eqTxt, 14) * 0.5f), (int)btnEquip.Y + 16, 14, eqCol);
+
+        // Botón Volver al Puente
+        Rectangle btnBack = new(35, sh - 58, 220, 42);
         DrawButton(btnBack, "VOLVER AL PUENTE", Raylib.CheckCollisionPointRec(mouse, btnBack));
     }
 
@@ -1701,36 +2467,52 @@ public static class Program
         if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _state = GameState.Menu; return; }
 
         Vector2 mouse = Raylib.GetMousePosition();
-        int cx = Raylib.GetScreenWidth() / 2;
+        int sw = Raylib.GetScreenWidth();
+        int sh = Raylib.GetScreenHeight();
+        int cx = sw / 2;
 
-        // Slot buttons (1, 2, 3)
+        int leftX = cx - 590;
+        int leftW = 490;
+
+        // 3 Cargador Slots selector
         for (int i = 0; i < 3; i++)
         {
-            Rectangle slotRec = new(cx - 180 + i * 130, 110, 100, 50);
+            Rectangle slotRec = new(leftX + i * 166, 96, 158, 58);
             if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, slotRec))
             {
                 _selectedStratagemSlot = i;
-            }
-        }
-
-        // Available stratagem cards
-        var all = StratagemRegistry.All.Values.ToList();
-        for (int i = 0; i < all.Count; i++)
-        {
-            int col = i % 2;
-            int row = i / 2;
-            Rectangle stratRec = new(cx - 360 + col * 370, 190 + row * 95, 350, 85);
-
-            if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, stratRec))
-            {
-                _save.EquippedStratagems[_selectedStratagemSlot] = all[i].Id;
-                _save.Save();
-                _player.Reset(_save);
                 _sound.PlayDeflect();
             }
         }
 
-        Rectangle btnBack = new(cx - 100, 630, 200, 42);
+        // Available stratagem cards list (Left column)
+        var all = StratagemRegistry.All.Values.ToList();
+        for (int i = 0; i < all.Count; i++)
+        {
+            Rectangle stratRec = new(leftX, 168 + i * 66, leftW, 60);
+            if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, stratRec))
+            {
+                _inspectedStratagemId = all[i].Id;
+                _sound.PlayDeflect();
+            }
+        }
+
+        // Master Terminal panel (Right column) Equip button
+        int rightX = cx - 80;
+        int rightW = 570;
+        Rectangle masterRec = new(rightX, 96, rightW, sh - 165);
+        Rectangle btnEquip = new(rightX + 22, (int)(masterRec.Y + masterRec.Height - 52), rightW - 44, 44);
+
+        if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, btnEquip))
+        {
+            _save.EquippedStratagems[_selectedStratagemSlot] = _inspectedStratagemId;
+            _save.Save();
+            _player.Reset(_save);
+            _sound.PlayTurretDeploy();
+        }
+
+        // Volver al puente
+        Rectangle btnBack = new(35, sh - 58, 220, 42);
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, btnBack))
         {
             _state = GameState.Menu;
@@ -1740,18 +2522,23 @@ public static class Program
     private static void DrawStratagems()
     {
         int sw = Raylib.GetScreenWidth();
+        int sh = Raylib.GetScreenHeight();
         int cx = sw / 2;
+        float time = (float)Raylib.GetTime();
 
-        Raylib.DrawText("ESTRATAGEMAS DE SUPER TIERRA", cx - Raylib.MeasureText("ESTRATAGEMAS DE SUPER TIERRA", 26) / 2, 36, 26, Constants.Gold);
-        string sub = "CONFIGURACIÓN DEL PROTOCOLO DE TRANSMISIÓN ORBITAL (CARGADOR TÁCTICO)";
-        Raylib.DrawText(sub, cx - Raylib.MeasureText(sub, 12) / 2, 70, 12, Constants.Cyan);
+        Raylib.DrawText("ESTRATAGEMAS DE SUPER TIERRA", cx - Raylib.MeasureText("ESTRATAGEMAS DE SUPER TIERRA", 26) / 2, 32, 26, Constants.Gold);
+        string sub = "CONFIGURACIÓN DEL PROTOCOLO DE TRANSMISIÓN ORBITAL (TERMINAL TÁCTICA)";
+        Raylib.DrawText(sub, cx - Raylib.MeasureText(sub, 12) / 2, 64, 12, Constants.Cyan);
 
         Vector2 mouse = Raylib.GetMousePosition();
 
-        // 3 Slots selector with glowing active outline
+        int leftX = cx - 590;
+        int leftW = 490;
+
+        // 1. Selector de 3 Cargadores del Helldiver
         for (int i = 0; i < 3; i++)
         {
-            Rectangle slotRec = new(cx - 200 + i * 140, 100, 120, 56);
+            Rectangle slotRec = new(leftX + i * 166, 96, 158, 58);
             bool isCurrent = _selectedStratagemSlot == i;
             string eqId = i < _save.EquippedStratagems.Count ? _save.EquippedStratagems[i] : "";
             StratagemRegistry.All.TryGetValue(eqId, out var def);
@@ -1759,54 +2546,129 @@ public static class Program
             Color sBorder = isCurrent ? Constants.Gold : Constants.BorderColor;
             DrawTacticalPanel(slotRec, sBorder, isCurrent ? new Color(28, 44, 76, 255) : new Color(15, 23, 42, 240));
 
-            Raylib.DrawText($"RANURA {i + 1}", (int)slotRec.X + 16, (int)slotRec.Y + 8, 11, isCurrent ? Constants.Gold : Color.LightGray);
-            Raylib.DrawText(def != null ? def.Icon : "[---]", (int)slotRec.X + 16, (int)slotRec.Y + 24, 13, Color.White);
+            Vector2 slotBadgePos = new(slotRec.X + 26, slotRec.Y + 29);
+            ProceduralAssetRenderer.DrawStratagemBadge(eqId, slotBadgePos, 36f, !string.IsNullOrEmpty(eqId), isCurrent);
+
+            Raylib.DrawText($"CARGADOR {i + 1}", (int)slotRec.X + 50, (int)slotRec.Y + 10, 10, isCurrent ? Constants.Gold : Color.LightGray);
+            string sName = def != null ? def.Icon : "[VACÍA]";
+            Raylib.DrawText(sName, (int)slotRec.X + 50, (int)slotRec.Y + 24, 11, Color.White);
 
             if (isCurrent)
             {
-                Raylib.DrawText("▼ ASIGNANDO", (int)slotRec.X + 16, (int)slotRec.Y + 40, 9, Constants.Gold);
+                Raylib.DrawText("▼ ASIGNANDO", (int)slotRec.X + 50, (int)slotRec.Y + 39, 9, Constants.Gold);
             }
         }
 
-        // Available stratagems
+        // 2. Catálogo de Estratagemas en lista vertical (Left Column)
         var all = StratagemRegistry.All.Values.ToList();
         for (int i = 0; i < all.Count; i++)
         {
             var def = all[i];
-            int col = i % 2;
-            int row = i / 2;
-            Rectangle stratRec = new(cx - 360 + col * 370, 175 + row * 105, 350, 95);
+            Rectangle stratRec = new(leftX, 168 + i * 66, leftW, 60);
 
             bool isEquippedInAny = _save.EquippedStratagems.Contains(def.Id);
+            bool isInspected = _inspectedStratagemId == def.Id;
             bool hover = Raylib.CheckCollisionPointRec(mouse, stratRec);
 
-            Color cardBorder = isEquippedInAny ? Constants.LibertyGreen : (hover ? Constants.Gold : Constants.BorderColor);
-            DrawTacticalPanel(stratRec, cardBorder, hover ? new Color(22, 33, 52, 255) : new Color(13, 20, 36, 245));
+            Color cardBorder = isInspected ? Constants.Gold : (isEquippedInAny ? Constants.LibertyGreen : (hover ? Constants.Cyan : Constants.BorderColor));
+            DrawTacticalPanel(stratRec, cardBorder, isInspected ? new Color(26, 38, 62, 255) : (hover ? new Color(20, 30, 48, 255) : new Color(13, 20, 36, 245)));
 
-            Raylib.DrawText($"{def.Icon} {def.Name.ToUpper()}", (int)stratRec.X + 14, (int)stratRec.Y + 12, 13, isEquippedInAny ? Constants.LibertyGreen : Constants.Gold);
+            // Insignia gráfica
+            Vector2 cardBadgePos = new(stratRec.X + 30, stratRec.Y + 30);
+            ProceduralAssetRenderer.DrawStratagemBadge(def.Id, cardBadgePos, 42f, isEquippedInAny, isInspected || hover);
 
-            // D-Pad call-in arrow sequence
+            Raylib.DrawText(def.Name.ToUpper(), (int)stratRec.X + 60, (int)stratRec.Y + 11, 12, isInspected ? Constants.Gold : (isEquippedInAny ? Constants.LibertyGreen : Color.White));
+
+            // Flechas de código compactas
             string codeArrows = GetStratagemCode(def.Id);
-            Raylib.DrawText(codeArrows, (int)stratRec.X + 14, (int)stratRec.Y + 30, 12, Constants.Gold);
+            string[] arrows = codeArrows.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            int dpadX = (int)stratRec.X + 60;
+            int dpadY = (int)stratRec.Y + 29;
+            for (int a = 0; a < arrows.Length; a++)
+            {
+                Rectangle kCap = new(dpadX + a * 18, dpadY, 15, 15);
+                Raylib.DrawRectangleRec(kCap, new Color(16, 24, 38, 255));
+                Raylib.DrawRectangleLinesEx(kCap, 1, isInspected ? Constants.Gold : new Color(50, 70, 95, 255));
+                Raylib.DrawText(arrows[a], (int)kCap.X + 3, (int)kCap.Y + 1, 10, Constants.Gold);
+            }
 
-            // Category & Cooldown
-            string catStr = $"{def.Category.ToUpper()} // REC: {def.Cooldown}s";
-            Raylib.DrawText(catStr, (int)stratRec.X + 14, (int)stratRec.Y + 48, 10, Constants.Cyan);
-
-            // Description
-            Raylib.DrawText(def.Description, (int)stratRec.X + 14, (int)stratRec.Y + 66, 9, Color.Gray);
+            string catTxt = $"{def.Category.ToUpper()} // {def.Cooldown}s";
+            Raylib.DrawText(catTxt, (int)(stratRec.X + stratRec.Width - Raylib.MeasureText(catTxt, 9) - 14), (int)stratRec.Y + 32, 9, Constants.Cyan);
 
             if (isEquippedInAny)
             {
-                Raylib.DrawText("[EN CARGADOR]", (int)stratRec.X + (int)stratRec.Width - 95, (int)stratRec.Y + 12, 10, Constants.LibertyGreen);
+                Raylib.DrawText("✓ EQUIPADA", (int)(stratRec.X + stratRec.Width - 85), (int)stratRec.Y + 11, 9, Constants.LibertyGreen);
             }
-            else if (hover)
+            else if (isInspected)
             {
-                Raylib.DrawText("[CLIC ASIGNAR]", (int)stratRec.X + (int)stratRec.Width - 98, (int)stratRec.Y + 12, 10, Constants.Gold);
+                Raylib.DrawText("► VISOR", (int)(stratRec.X + stratRec.Width - 75), (int)stratRec.Y + 11, 9, Constants.Gold);
             }
         }
 
-        Rectangle btnBack = new(cx - 100, 630, 200, 42);
+        // 3. Panel Maestro de Visor Táctico de Estratagema (Right Column)
+        int rightX = cx - 80;
+        int rightW = 570;
+        Rectangle masterRec = new(rightX, 96, rightW, sh - 165);
+        StratagemRegistry.All.TryGetValue(_inspectedStratagemId, out var inspected);
+        if (inspected == null) inspected = all[0];
+
+        bool masterEquippedInSlot = _save.EquippedStratagems.Count > _selectedStratagemSlot && _save.EquippedStratagems[_selectedStratagemSlot] == inspected.Id;
+        Color masterBorder = masterEquippedInSlot ? Constants.LibertyGreen : Constants.Gold;
+        DrawTacticalPanel(masterRec, masterBorder, new Color(9, 15, 27, 245));
+
+        // Título del visor
+        Raylib.DrawText(inspected.Name.ToUpper(), rightX + 22, (int)masterRec.Y + 14, 18, Constants.Gold);
+        string catBadge = $"CATEGORÍA: {inspected.Category.ToUpper()} // CÓDIGO DE ENLACE ORBITAL";
+        Raylib.DrawText(catBadge, rightX + 22, (int)masterRec.Y + 36, 10, Constants.Cyan);
+
+        // ILUSTRACIÓN PIXEL-ART HD DE LA ESTRATAGEMA
+        Rectangle illustRec = new(rightX + 22, (int)masterRec.Y + 54, rightW - 44, 205);
+        ProceduralAssetRenderer.DrawStratagemIllustration(inspected.Id, illustRec, time);
+
+        // Secuencia D-Pad de llamada con teclas tácticas grandes
+        int dpadMasterY = (int)illustRec.Y + (int)illustRec.Height + 14;
+        Raylib.DrawText("SECUENCIA D-PAD DE TRANSMISIÓN:", rightX + 22, dpadMasterY, 11, Constants.Gold);
+        string mCodeArrows = GetStratagemCode(inspected.Id);
+        string[] mArrows = mCodeArrows.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        int mDpadX = rightX + 245;
+        for (int a = 0; a < mArrows.Length; a++)
+        {
+            Rectangle kCap = new(mDpadX + a * 30, dpadMasterY - 5, 26, 26);
+            Raylib.DrawRectangleRec(kCap, new Color(20, 30, 48, 255));
+            Raylib.DrawRectangleLinesEx(kCap, 1.5f, Constants.Gold);
+            Raylib.DrawText(mArrows[a], (int)kCap.X + 7, (int)kCap.Y + 4, 15, Constants.SuperEarthYellow);
+        }
+
+        // Especificaciones militares de combate
+        string mDeployTime = inspected.Id.Contains("500kg") ? "2.4 seg" : (inspected.Id.Contains("precision") ? "1.6 seg" : (inspected.Id.Contains("sentry") ? "1.8 seg" : "0.5 seg"));
+        string penTier = inspected.Id.Contains("500kg") || inspected.Id.Contains("precision") || inspected.Id.Contains("autocannon") ? "PESADA / TITANES" : "MEDIA / LIGERA";
+
+        int specY = dpadMasterY + 34;
+        DrawStatBar(rightX + 22, specY, rightW - 44, 5, inspected.Cooldown / 120f, Constants.Cyan, "TIEMPO DE RECARGA", $"{inspected.Cooldown}s");
+        DrawStatBar(rightX + 22, specY + 22, rightW - 44, 5, 0.85f, Constants.OrangeHazard, "PENETRACIÓN DE BLINDAJE", penTier);
+        DrawStatBar(rightX + 22, specY + 44, rightW - 44, 5, 0.70f, Constants.LibertyGreen, "TIEMPO DE DESPLIEGUE ORBITAL", mDeployTime);
+
+        // Lore y descripción táctica
+        Rectangle descBox = new(rightX + 22, specY + 70, rightW - 44, 46);
+        Raylib.DrawRectangleRec(descBox, new Color(14, 22, 38, 255));
+        Raylib.DrawRectangleLinesEx(descBox, 1, Constants.BorderColor);
+        Raylib.DrawText(inspected.Description, (int)descBox.X + 10, (int)descBox.Y + 8, 10, Color.LightGray);
+
+        // Botón Equipar en Cargador seleccionado
+        Rectangle btnEquip = new(rightX + 22, (int)(masterRec.Y + masterRec.Height - 52), rightW - 44, 44);
+        bool hoverEquip = Raylib.CheckCollisionPointRec(mouse, btnEquip);
+        Color equipBg = masterEquippedInSlot ? new Color(15, 60, 35, 255) : (hoverEquip ? Constants.Gold : Constants.SuperEarthYellow);
+        Raylib.DrawRectangleRec(btnEquip, equipBg);
+        Raylib.DrawRectangleLinesEx(btnEquip, 2, masterEquippedInSlot ? Constants.LibertyGreen : Color.White);
+
+        string eqTxt = masterEquippedInSlot 
+            ? $"[ ✓ YA EQUIPADA EN CARGADOR {_selectedStratagemSlot + 1} ]" 
+            : (hoverEquip ? $">>> ASIGNAR A CARGADOR {_selectedStratagemSlot + 1} <<<" : $"EQUIPAR EN CARGADOR {_selectedStratagemSlot + 1}");
+        Color eqCol = masterEquippedInSlot ? Constants.LibertyGreen : Color.Black;
+        Raylib.DrawText(eqTxt, (int)(btnEquip.X + btnEquip.Width * 0.5f - Raylib.MeasureText(eqTxt, 13) * 0.5f), (int)btnEquip.Y + 15, 13, eqCol);
+
+        // Botón Volver al Puente
+        Rectangle btnBack = new(35, sh - 58, 220, 42);
         DrawButton(btnBack, "VOLVER AL PUENTE", Raylib.CheckCollisionPointRec(mouse, btnBack));
     }
 
@@ -1815,10 +2677,12 @@ public static class Program
         if (Raylib.IsKeyPressed(KeyboardKey.Escape)) { _state = GameState.Menu; return; }
 
         Vector2 mouse = Raylib.GetMousePosition();
-        int cx = Raylib.GetScreenWidth() / 2;
+        int sw = Raylib.GetScreenWidth();
+        int sh = Raylib.GetScreenHeight();
+        int cx = sw / 2;
 
-        // Upgrade 1: Max HP
-        Rectangle b1 = new(cx + 140, 150, 110, 36);
+        // Upgrade 1: Refuerzo de Armadura de Grafeno (Casco)
+        Rectangle b1 = new(cx - 490 + 345, 335 + 22, 115, 38);
         int cost1 = (_save.Hangar.MaxHpLevel + 1) * 5;
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, b1) && _save.Samples >= cost1)
         {
@@ -1829,8 +2693,8 @@ public static class Program
             _sound.PlayVictory();
         }
 
-        // Upgrade 2: Speed
-        Rectangle b2 = new(cx + 140, 230, 110, 36);
+        // Upgrade 2: Servomotores de Movilidad (Turbinas FTL)
+        Rectangle b2 = new(cx + 15 + 345, 335 + 22, 115, 38);
         int cost2 = (_save.Hangar.SpeedLevel + 1) * 5;
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, b2) && _save.Samples >= cost2)
         {
@@ -1841,8 +2705,8 @@ public static class Program
             _sound.PlayVictory();
         }
 
-        // Upgrade 3: Damage
-        Rectangle b3 = new(cx + 140, 310, 110, 36);
+        // Upgrade 3: Calibración Balística de Combate (Cañones Pesados)
+        Rectangle b3 = new(cx - 490 + 345, 428 + 22, 115, 38);
         int cost3 = (_save.Hangar.DamageLevel + 1) * 8;
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, b3) && _save.Samples >= cost3)
         {
@@ -1853,8 +2717,8 @@ public static class Program
             _sound.PlayVictory();
         }
 
-        // Upgrade 4: Shield Generator
-        Rectangle b4 = new(cx + 140, 390, 110, 36);
+        // Upgrade 4: Generador de Escudo Relé SH-20 (Proyector de Escudos)
+        Rectangle b4 = new(cx + 15 + 345, 428 + 22, 115, 38);
         int cost4 = (_save.Hangar.ShieldLevel + 1) * 10;
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, b4) && _save.Samples >= cost4)
         {
@@ -1865,7 +2729,8 @@ public static class Program
             _sound.PlayVictory();
         }
 
-        Rectangle btnBack = new(cx - 100, 560, 200, 42);
+        // Volver al Puente
+        Rectangle btnBack = new(35, sh - 58, 220, 42);
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, btnBack))
         {
             _state = GameState.Menu;
@@ -1875,43 +2740,71 @@ public static class Program
     private static void DrawHangar()
     {
         int sw = Raylib.GetScreenWidth();
+        int sh = Raylib.GetScreenHeight();
         int cx = sw / 2;
+        float time = (float)Raylib.GetTime();
 
-        Raylib.DrawText("HANGAR Y MÓDULOS DE LA NAVE", cx - Raylib.MeasureText("HANGAR Y MÓDULOS DE LA NAVE", 26) / 2, 36, 26, Constants.Gold);
+        Raylib.DrawText("HANGAR Y MÓDULOS DEL SUPER DESTRUCTOR", cx - Raylib.MeasureText("HANGAR Y MÓDULOS DEL SUPER DESTRUCTOR", 24) / 2, 28, 24, Constants.Gold);
         string sub = $"MUESTRAS DISPONIBLES EN DESTRUCTOR: {_save.Samples} ☣️";
-        Raylib.DrawText(sub, cx - Raylib.MeasureText(sub, 14) / 2, 70, 14, Constants.LibertyGreen);
+        Raylib.DrawText(sub, cx - Raylib.MeasureText(sub, 13) / 2, 58, 13, Constants.LibertyGreen);
 
         Vector2 mouse = Raylib.GetMousePosition();
 
-        DrawHangarUpgradeCard(cx, 140, "REFUERZO DE ARMADURA DE GRAFENO", "+20 HP Máxima de combate por nivel", _save.Hangar.MaxHpLevel, (_save.Hangar.MaxHpLevel + 1) * 5, mouse);
-        DrawHangarUpgradeCard(cx, 220, "SERVOMOTORES DE MOVILIDAD TÁCTICA", "+7% Velocidad de carrera por nivel", _save.Hangar.SpeedLevel, (_save.Hangar.SpeedLevel + 1) * 5, mouse);
-        DrawHangarUpgradeCard(cx, 300, "CALIBRACIÓN BALÍSTICA DE COMBATE", "+10% Daño de Armas de fuego por nivel", _save.Hangar.DamageLevel, (_save.Hangar.DamageLevel + 1) * 8, mouse);
-        DrawHangarUpgradeCard(cx, 380, "GENERADOR DE ESCUDO RELÉ SH-20", "+25 Capacidad de Escudo por nivel", _save.Hangar.ShieldLevel, (_save.Hangar.ShieldLevel + 1) * 10, mouse);
+        // 1. ÁREA SUPERIOR: SUPER DESTROYER EN EL HANGAR
+        Rectangle shipArea = new(cx - 500, 84, 1000, 235);
+        DrawTacticalPanel(shipArea, Constants.BorderColor, new Color(8, 14, 24, 245));
 
-        Rectangle btnBack = new(cx - 100, 560, 200, 42);
+        // Cuadrícula y telemetría de hangar
+        for (int x = (int)shipArea.X + 40; x < (int)(shipArea.X + shipArea.Width); x += 40)
+            Raylib.DrawLine(x, (int)shipArea.Y + 2, x, (int)(shipArea.Y + shipArea.Height - 2), new Color(25, 38, 58, 45));
+
+        // Dibujar el Super Destroyer pixel-art con sus mejoras vivas
+        Vector2 shipCenter = new(cx, (int)shipArea.Y + 105);
+        ProceduralAssetRenderer.DrawSuperDestroyer(
+            shipCenter,
+            1.05f,
+            time,
+            _save.Hangar.MaxHpLevel,
+            _save.Hangar.SpeedLevel,
+            _save.Hangar.DamageLevel,
+            _save.Hangar.ShieldLevel);
+
+        // 2. ÁREA INFERIOR: TARJETAS DE MEJORA EN CUADRÍCULA 2x2
+        Rectangle c1 = new(cx - 490, 335, 475, 80);
+        Rectangle c2 = new(cx + 15,  335, 475, 80);
+        Rectangle c3 = new(cx - 490, 428, 475, 80);
+        Rectangle c4 = new(cx + 15,  428, 475, 80);
+
+        DrawHangarUpgradeCard(c1, "REFUERZO DE CASCO DE GRAFENO", "+20 HP Máxima de combate por nivel", _save.Hangar.MaxHpLevel, (_save.Hangar.MaxHpLevel + 1) * 5, mouse);
+        DrawHangarUpgradeCard(c2, "TURBINAS FTL Y SERVOS TÁCTICOS", "+7% Velocidad de carrera por nivel", _save.Hangar.SpeedLevel, (_save.Hangar.SpeedLevel + 1) * 5, mouse);
+        DrawHangarUpgradeCard(c3, "CALIBRACIÓN BALÍSTICA DE PROA", "+10% Daño de Armas de fuego por nivel", _save.Hangar.DamageLevel, (_save.Hangar.DamageLevel + 1) * 8, mouse);
+        DrawHangarUpgradeCard(c4, "PROYECTOR DE ESCUDO RELÉ SH-20", "+25 Capacidad de Escudo por nivel", _save.Hangar.ShieldLevel, (_save.Hangar.ShieldLevel + 1) * 10, mouse);
+
+        // 3. Botón Volver al Puente
+        Rectangle btnBack = new(35, sh - 58, 220, 42);
         DrawButton(btnBack, "VOLVER AL PUENTE", Raylib.CheckCollisionPointRec(mouse, btnBack));
     }
 
-    private static void DrawHangarUpgradeCard(int cx, int y, string title, string desc, int level, int cost, Vector2 mouse)
+    private static void DrawHangarUpgradeCard(Rectangle card, string title, string desc, int level, int cost, Vector2 mouse)
     {
-        Rectangle card = new(cx - 280, y, 560, 65);
         DrawTacticalPanel(card, Constants.BorderColor, new Color(13, 20, 36, 245));
 
-        Raylib.DrawText(title, (int)card.X + 16, (int)card.Y + 12, 13, Constants.Gold);
-        Raylib.DrawText(desc, (int)card.X + 16, (int)card.Y + 28, 10, Color.LightGray);
+        Raylib.DrawText(title, (int)card.X + 16, (int)card.Y + 14, 12, Constants.Gold);
+        Raylib.DrawText(desc, (int)card.X + 16, (int)card.Y + 32, 10, Color.LightGray);
 
-        // 5 visual tier pips
+        // 5 pips de nivel
         int pipX = (int)card.X + 16;
-        int pipY = (int)card.Y + 45;
+        int pipY = (int)card.Y + 52;
         for (int p = 0; p < 5; p++)
         {
             bool filled = p < level;
-            Raylib.DrawRectangle(pipX + p * 16, pipY, 12, 6, filled ? Constants.LibertyGreen : new Color(30, 42, 60, 255));
-            Raylib.DrawRectangleLines(pipX + p * 16, pipY, 12, 6, filled ? Constants.LibertyGreen : Color.DarkGray);
+            Raylib.DrawRectangle(pipX + p * 18, pipY, 14, 7, filled ? Constants.LibertyGreen : new Color(30, 42, 60, 255));
+            Raylib.DrawRectangleLines(pipX + p * 18, pipY, 14, 7, filled ? Constants.LibertyGreen : Color.DarkGray);
         }
-        Raylib.DrawText($"NV. {level} / 5", pipX + 90, pipY - 2, 9, Constants.Cyan);
+        Raylib.DrawText($"NV. {level} / 5", pipX + 104, pipY - 1, 9, Constants.Cyan);
 
-        Rectangle btnBuy = new(cx + 140, y + 14, 115, 36);
+        // Botón Comprar / Mejorar
+        Rectangle btnBuy = new((int)(card.X + card.Width - 130), (int)card.Y + 22, 115, 38);
         bool canAfford = _save.Samples >= cost;
         bool hover = Raylib.CheckCollisionPointRec(mouse, btnBuy);
 
@@ -1920,7 +2813,7 @@ public static class Program
         Raylib.DrawRectangleLinesEx(btnBuy, 1, canAfford ? Constants.LibertyGreen : Color.DarkGray);
 
         string buyTxt = canAfford ? $"MEJORAR ({cost} ☣️)" : $"REQ {cost} ☣️";
-        Raylib.DrawText(buyTxt, (int)btnBuy.X + (int)btnBuy.Width / 2 - Raylib.MeasureText(buyTxt, 11) / 2, (int)btnBuy.Y + 12, 11, canAfford ? Color.White : Color.Gray);
+        Raylib.DrawText(buyTxt, (int)btnBuy.X + (int)btnBuy.Width / 2 - Raylib.MeasureText(buyTxt, 11) / 2, (int)btnBuy.Y + 13, 11, canAfford ? Color.White : Color.Gray);
     }
 
     private static void DrawPauseOverlay()
@@ -2141,7 +3034,42 @@ public static class Program
         int sh = Raylib.GetScreenHeight();
         int cx = sw / 2;
 
-        Raylib.DrawRectangle(0, 0, sw, sh, new Color(6, 13, 22, 245));
+        // Init Confetti si está vacío
+        if (_confetti.Count == 0)
+        {
+            Color[] cColors = { Constants.SuperEarthYellow, Constants.LibertyGreen, Constants.TacticalCyan, Color.White, Constants.Gold };
+            for (int i = 0; i < 90; i++)
+            {
+                _confetti.Add(new VictoryConfetti
+                {
+                    Position = new Vector2((float)_rnd.NextDouble() * sw, (float)_rnd.NextDouble() * -sh),
+                    Velocity = new Vector2((float)_rnd.NextDouble() * 70f - 35f, (float)_rnd.NextDouble() * 110f + 75f),
+                    Rotation = (float)_rnd.NextDouble() * 360f,
+                    AngularSpeed = (float)_rnd.NextDouble() * 200f - 100f,
+                    Width = (float)_rnd.NextDouble() * 8f + 5f,
+                    Height = (float)_rnd.NextDouble() * 6f + 3f,
+                    Color = cColors[_rnd.Next(cColors.Length)]
+                });
+            }
+        }
+
+        // Animar y dibujar Confetti procedimental de la victoria
+        float dt = Raylib.GetFrameTime();
+        foreach (var c in _confetti)
+        {
+            c.Position += c.Velocity * dt;
+            c.Rotation += c.AngularSpeed * dt;
+            if (c.Position.Y > sh + 20)
+            {
+                c.Position.Y = -15f;
+                c.Position.X = (float)_rnd.NextDouble() * sw;
+            }
+            Rectangle cRec = new(c.Position.X, c.Position.Y, c.Width, c.Height);
+            Vector2 cOrig = new(c.Width * 0.5f, c.Height * 0.5f);
+            Raylib.DrawRectanglePro(cRec, cOrig, c.Rotation, c.Color);
+        }
+
+        Raylib.DrawRectangle(0, 0, sw, sh, new Color(6, 13, 22, 210));
 
         // Victory Laurel Stars
         string stars = "★  ★  ★";
@@ -2204,6 +3132,45 @@ public static class Program
         Vector2 mouse = Raylib.GetMousePosition();
         int cx = Raylib.GetScreenWidth() / 2;
 
+        // Faction Tabs Clicks
+        Rectangle tabTerm = new(cx - 390, 62, 240, 30);
+        Rectangle tabAuto = new(cx - 135, 62, 270, 30);
+        Rectangle tabIllum = new(cx + 150, 62, 240, 30);
+
+        if (Raylib.IsMouseButtonPressed(MouseButton.Left))
+        {
+            if (Raylib.CheckCollisionPointRec(mouse, tabTerm))
+            {
+                if (_selectedBestiaryFaction != Faction.Terminids)
+                {
+                    _selectedBestiaryFaction = Faction.Terminids;
+                    _selectedBestiaryIndex = BestiaryRegistry.Entries.FindIndex(e => e.Faction == Faction.Terminids);
+                    _sound.PlayDeflect();
+                }
+                return;
+            }
+            if (Raylib.CheckCollisionPointRec(mouse, tabAuto))
+            {
+                if (_selectedBestiaryFaction != Faction.Automatons)
+                {
+                    _selectedBestiaryFaction = Faction.Automatons;
+                    _selectedBestiaryIndex = BestiaryRegistry.Entries.FindIndex(e => e.Faction == Faction.Automatons);
+                    _sound.PlayDeflect();
+                }
+                return;
+            }
+            if (Raylib.CheckCollisionPointRec(mouse, tabIllum))
+            {
+                if (_selectedBestiaryFaction != Faction.Illuminate)
+                {
+                    _selectedBestiaryFaction = Faction.Illuminate;
+                    _selectedBestiaryIndex = BestiaryRegistry.Entries.FindIndex(e => e.Faction == Faction.Illuminate);
+                    _sound.PlayDeflect();
+                }
+                return;
+            }
+        }
+
         // Back button
         Rectangle btnBack = new(cx - 130, 660, 260, 36);
         if (Raylib.IsMouseButtonPressed(MouseButton.Left) && Raylib.CheckCollisionPointRec(mouse, btnBack))
@@ -2213,11 +3180,13 @@ public static class Program
             return;
         }
 
-        // Card clicks
+        // Card clicks within current faction
         var entries = BestiaryRegistry.Entries;
+        int factionIndex = 0;
         for (int i = 0; i < entries.Count; i++)
         {
-            Rectangle cardRec = GetBestiaryCardRec(i);
+            if (entries[i].Faction != _selectedBestiaryFaction) continue;
+            Rectangle cardRec = GetBestiaryCardRec(factionIndex);
             if (Raylib.CheckCollisionPointRec(mouse, cardRec))
             {
                 if (Raylib.IsMouseButtonPressed(MouseButton.Left) && _selectedBestiaryIndex != i)
@@ -2226,27 +3195,15 @@ public static class Program
                     _sound.PlayDeflect();
                 }
             }
+            factionIndex++;
         }
     }
 
-    private static Rectangle GetBestiaryCardRec(int i)
+    private static Rectangle GetBestiaryCardRec(int j)
     {
-        if (i < 12)
-        {
-            // Terminids (4 rows x 3 columns)
-            int col = i % 3;
-            int row = i / 3;
-            return new Rectangle(35 + col * 196, 92 + row * 63, 192, 60);
-        }
-        else if (i < 24)
-        {
-            // Automatons (4 rows x 3 columns)
-            int j = i - 12;
-            int col = j % 3;
-            int row = j / 3;
-            return new Rectangle(660 + col * 196, 92 + row * 63, 192, 60);
-        }
-        return new Rectangle(0, 0, 0, 0);
+        int col = j % 4;
+        int row = j / 4;
+        return new Rectangle(55 + col * 296, 98 + row * 57, 284, 52);
     }
 
     private static void DrawHazardStripes(Rectangle rec, Color stripeColor, Color bgColor)
@@ -2300,47 +3257,69 @@ public static class Program
         Vector2 mouse = Raylib.GetMousePosition();
         var entries = BestiaryRegistry.Entries;
 
-        // 1. Header with Hazard Warning Stripes
-        Rectangle leftHazard = new(35, 12, 190, 48);
-        DrawHazardStripes(leftHazard, Constants.OrangeHazard, new Color(18, 12, 8, 255));
-        Raylib.DrawRectangle((int)leftHazard.X + 12, (int)leftHazard.Y + 12, (int)leftHazard.Width - 24, 24, new Color(10, 15, 24, 230));
-        string termTag = "/// TERMINIDS ///";
-        Raylib.DrawText(termTag, (int)leftHazard.X + (int)leftHazard.Width / 2 - Raylib.MeasureText(termTag, 11) / 2, (int)leftHazard.Y + 17, 11, Constants.OrangeHazard);
+        // Ensure selection safety
+        if (_selectedBestiaryIndex < 0 || _selectedBestiaryIndex >= entries.Count)
+            _selectedBestiaryIndex = 0;
 
-        Rectangle rightHazard = new(1055, 12, 190, 48);
-        DrawHazardStripes(rightHazard, Constants.DemocracyRed, new Color(20, 8, 10, 255));
-        Raylib.DrawRectangle((int)rightHazard.X + 12, (int)rightHazard.Y + 12, (int)rightHazard.Width - 24, 24, new Color(10, 15, 24, 230));
-        string autoTag = "/// AUTOMATONS ///";
-        Raylib.DrawText(autoTag, (int)rightHazard.X + (int)rightHazard.Width / 2 - Raylib.MeasureText(autoTag, 11) / 2, (int)rightHazard.Y + 17, 11, Constants.DemocracyRed);
+        // 1. Header with Hazard Warning Stripes
+        Rectangle leftHazard = new(35, 12, 190, 44);
+        DrawHazardStripes(leftHazard, Constants.OrangeHazard, new Color(18, 12, 8, 255));
+        Raylib.DrawRectangle((int)leftHazard.X + 12, (int)leftHazard.Y + 10, (int)leftHazard.Width - 24, 24, new Color(10, 15, 24, 230));
+        string termTag = "/// ARCHIVO SEAF ///";
+        Raylib.DrawText(termTag, (int)leftHazard.X + (int)leftHazard.Width / 2 - Raylib.MeasureText(termTag, 10) / 2, (int)leftHazard.Y + 16, 10, Constants.Gold);
+
+        Rectangle rightHazard = new(1055, 12, 190, 44);
+        Color rHazCol = _selectedBestiaryFaction == Faction.Illuminate ? Constants.IlluminateMagenta : Constants.DemocracyRed;
+        DrawHazardStripes(rightHazard, rHazCol, new Color(20, 8, 10, 255));
+        Raylib.DrawRectangle((int)rightHazard.X + 12, (int)rightHazard.Y + 10, (int)rightHazard.Width - 24, 24, new Color(10, 15, 24, 230));
+        string topLevel = "/// TOP SECRET ///";
+        Raylib.DrawText(topLevel, (int)rightHazard.X + (int)rightHazard.Width / 2 - Raylib.MeasureText(topLevel, 10) / 2, (int)rightHazard.Y + 16, 10, rHazCol);
 
         // Center Title & Subtitles
-        string mainTitle = "HELLDIVERS II - ENEMY BESTIARY // ENEMIES OF DEMOCRACY";
-        Raylib.DrawText(mainTitle, cx - Raylib.MeasureText(mainTitle, 19) / 2, 16, 19, Constants.Gold);
-        string sub1 = "SUPER EARTH ARMED FORCES // ARCHIVO TÁCTICO DE INTELIGENCIA MILITAR";
-        Raylib.DrawText(sub1, cx - Raylib.MeasureText(sub1, 11) / 2, 39, 11, Constants.Cyan);
-        string sub2 = "[ REGISTROS DESCLASIFICADOS // VULNERABILIDADES BALÍSTICAS AUTORIZADAS ]";
-        Raylib.DrawText(sub2, cx - Raylib.MeasureText(sub2, 9) / 2, 54, 9, Color.LightGray);
+        string mainTitle = "HELLDIVERS II - ARCHIVO TÁCTICO DE ENEMIGOS DE LA DEMOCRACIA";
+        Raylib.DrawText(mainTitle, cx - Raylib.MeasureText(mainTitle, 18) / 2, 14, 18, Constants.Gold);
+        string sub1 = "SUPER EARTH ARMED FORCES // INTELIGENCIA BIOLÓGICA, SINTÉTICA Y PSÍONICA";
+        Raylib.DrawText(sub1, cx - Raylib.MeasureText(sub1, 10) / 2, 36, 10, Constants.Cyan);
 
-        // 2. Faction Column Banners
-        Rectangle termHdrRec = new(35, 66, 584, 24);
-        DrawTacticalPanel(termHdrRec, Constants.OrangeHazard, new Color(26, 18, 10, 250));
-        Raylib.DrawText("BIOLOGÍA TERMINIDA // ENJAMBRE BIO-MUTANTE", (int)termHdrRec.X + 14, (int)termHdrRec.Y + 5, 11, Constants.OrangeHazard);
-        Raylib.DrawText("[ESPECIES: 12 REGISTRADAS]", (int)termHdrRec.X + (int)termHdrRec.Width - 175, (int)termHdrRec.Y + 6, 9, Constants.Cyan);
+        // 2. Interactive Faction Selector Tabs
+        Rectangle tabTerm = new(cx - 390, 62, 240, 30);
+        Rectangle tabAuto = new(cx - 135, 62, 270, 30);
+        Rectangle tabIllum = new(cx + 150, 62, 240, 30);
 
-        Rectangle autoHdrRec = new(660, 66, 584, 24);
-        DrawTacticalPanel(autoHdrRec, Constants.DemocracyRed, new Color(28, 10, 14, 250));
-        Raylib.DrawText("AMENAZA AUTÓMATA // LEGIÓN SINTÉTICA", (int)autoHdrRec.X + 14, (int)autoHdrRec.Y + 5, 11, Constants.DemocracyRed);
-        Raylib.DrawText("[MODELOS: 12 REGISTRADOS]", (int)autoHdrRec.X + (int)autoHdrRec.Width - 170, (int)autoHdrRec.Y + 6, 9, Constants.Cyan);
+        bool isTerm = _selectedBestiaryFaction == Faction.Terminids;
+        bool isAuto = _selectedBestiaryFaction == Faction.Automatons;
+        bool isIllum = _selectedBestiaryFaction == Faction.Illuminate;
 
-        // 3. Render 24 Cards (12 Terminids, 12 Automatons)
+        // Terminid Tab
+        bool hovTerm = Raylib.CheckCollisionPointRec(mouse, tabTerm);
+        DrawTacticalPanel(tabTerm, isTerm ? Constants.Gold : (hovTerm ? Constants.OrangeHazard : new Color(60, 45, 25, 200)), isTerm ? new Color(38, 24, 12, 255) : new Color(16, 12, 8, 230));
+        string tLbl = "☣️ TERMINIDS (12)";
+        Raylib.DrawText(tLbl, (int)tabTerm.X + (int)tabTerm.Width / 2 - Raylib.MeasureText(tLbl, 11) / 2, (int)tabTerm.Y + 9, 11, isTerm ? Constants.Gold : (hovTerm ? Color.White : Constants.OrangeHazard));
+
+        // Automaton & Cyborg Tab
+        bool hovAuto = Raylib.CheckCollisionPointRec(mouse, tabAuto);
+        DrawTacticalPanel(tabAuto, isAuto ? Constants.Gold : (hovAuto ? Constants.DemocracyRed : new Color(65, 30, 35, 200)), isAuto ? new Color(42, 14, 18, 255) : new Color(18, 10, 12, 230));
+        string aLbl = "⚙️ AUTÓMATAS & CÍBORGS (15)";
+        Raylib.DrawText(aLbl, (int)tabAuto.X + (int)tabAuto.Width / 2 - Raylib.MeasureText(aLbl, 11) / 2, (int)tabAuto.Y + 9, 11, isAuto ? Constants.Gold : (hovAuto ? Color.White : Constants.DemocracyRed));
+
+        // Illuminate Tab
+        bool hovIllum = Raylib.CheckCollisionPointRec(mouse, tabIllum);
+        DrawTacticalPanel(tabIllum, isIllum ? Constants.Gold : (hovIllum ? Constants.IlluminateMagenta : new Color(55, 25, 75, 200)), isIllum ? new Color(40, 16, 56, 255) : new Color(16, 8, 24, 230));
+        string iLbl = "🔮 LOS ILUMINADOS (5)";
+        Raylib.DrawText(iLbl, (int)tabIllum.X + (int)tabIllum.Width / 2 - Raylib.MeasureText(iLbl, 11) / 2, (int)tabIllum.Y + 9, 11, isIllum ? Constants.Gold : (hovIllum ? Color.White : Constants.IlluminateMagenta));
+
+        // 3. Render Cards of Current Selected Faction
+        int factionIdx = 0;
         for (int i = 0; i < entries.Count; i++)
         {
             var entry = entries[i];
-            Rectangle cardRec = GetBestiaryCardRec(i);
+            if (entry.Faction != _selectedBestiaryFaction) continue;
+
+            Rectangle cardRec = GetBestiaryCardRec(factionIdx);
             bool isSel = (_selectedBestiaryIndex == i);
             bool isHover = Raylib.CheckCollisionPointRec(mouse, cardRec);
 
-            Color borderCol = isSel ? Constants.Gold : (isHover ? (entry.Faction == Faction.Terminids ? Constants.OrangeHazard : Constants.Cyan) : new Color(42, 58, 78, 220));
+            Color borderCol = isSel ? Constants.Gold : (isHover ? (entry.Faction == Faction.Terminids ? Constants.OrangeHazard : (entry.Faction == Faction.Illuminate ? Constants.IlluminateMagenta : Constants.Cyan)) : new Color(42, 58, 78, 220));
             Color bgCol = isSel ? new Color(22, 34, 54, 255) : (isHover ? new Color(18, 26, 42, 245) : new Color(12, 18, 30, 235));
 
             DrawTacticalPanel(cardRec, borderCol, bgCol);
@@ -2360,17 +3339,16 @@ public static class Program
             }
 
             // Miniature Viewport (Left square)
-            Rectangle vpRec = new(cardRec.X + 4, cardRec.Y + 4, 52, 52);
+            Rectangle vpRec = new(cardRec.X + 4, cardRec.Y + 4, 44, 44);
             Raylib.DrawRectangleRec(vpRec, new Color(7, 11, 18, 255));
             Raylib.DrawRectangleLinesEx(vpRec, 1, isSel ? Constants.Gold : new Color(30, 42, 58, 255));
 
             // Grid lines inside viewport
-            Raylib.DrawLine((int)vpRec.X + 26, (int)vpRec.Y + 2, (int)vpRec.X + 26, (int)vpRec.Y + 50, new Color(25, 38, 54, 180));
-            Raylib.DrawLine((int)vpRec.X + 2, (int)vpRec.Y + 26, (int)vpRec.X + 50, (int)vpRec.Y + 26, new Color(25, 38, 54, 180));
+            Raylib.DrawLine((int)vpRec.X + 22, (int)vpRec.Y + 2, (int)vpRec.X + 22, (int)vpRec.Y + 42, new Color(25, 38, 54, 180));
+            Raylib.DrawLine((int)vpRec.X + 2, (int)vpRec.Y + 22, (int)vpRec.X + 42, (int)vpRec.Y + 22, new Color(25, 38, 54, 180));
 
-            // AUTHENTIC EXTRACTED PIXEL ART SPRITE RENDER!
-            Vector2 vpCenter = new(vpRec.X + 26, vpRec.Y + 26);
-            EnemySpriteManager.DrawSpriteCentered(entry.SpriteKey, vpCenter, 44f, Color.White);
+            // Sprite / Procedural preview render
+            EnemySpriteManager.DrawSpriteFit(entry.SpriteKey, vpRec, Color.White, padding: 3f);
 
             // Threat level indicator pips (top right corner)
             int pipStartX = (int)cardRec.X + (int)cardRec.Width - 36;
@@ -2397,98 +3375,105 @@ public static class Program
             }
 
             // Card details text
-            int textX = (int)cardRec.X + 60;
+            int textX = (int)cardRec.X + 54;
             string nameTxt = entry.Name.ToUpper();
-            if (nameTxt.Length > 16) nameTxt = nameTxt.Substring(0, 15) + ".";
-            Raylib.DrawText(nameTxt, textX, (int)cardRec.Y + 6, 10, isSel ? Constants.Gold : Color.White);
+            if (nameTxt.Length > 19) nameTxt = nameTxt.Substring(0, 18) + ".";
+            Raylib.DrawText(nameTxt, textX, (int)cardRec.Y + 5, 10, isSel ? Constants.Gold : Color.White);
 
             string engTxt = entry.EnglishName.ToUpper();
-            if (engTxt.Length > 20) engTxt = engTxt.Substring(0, 18) + ".";
-            Raylib.DrawText(engTxt, textX, (int)cardRec.Y + 20, 8, Constants.Cyan);
+            if (engTxt.Length > 22) engTxt = engTxt.Substring(0, 20) + ".";
+            Raylib.DrawText(engTxt, textX, (int)cardRec.Y + 18, 8, Constants.Cyan);
 
             string armTxt = entry.ArmorClass;
-            if (armTxt.Length > 18) armTxt = armTxt.Substring(0, 16) + "..";
-            Color wpCol = entry.Faction == Faction.Terminids ? Constants.SuperEarthYellow : Constants.LibertyGreen;
-            Raylib.DrawText(armTxt, textX, (int)cardRec.Y + 34, 8, wpCol);
+            if (armTxt.Length > 24) armTxt = armTxt.Substring(0, 22) + "..";
+            Color wpCol = entry.Faction == Faction.Terminids ? Constants.SuperEarthYellow : (entry.Faction == Faction.Illuminate ? Constants.IlluminateCyan : Constants.LibertyGreen);
+            Raylib.DrawText(armTxt, textX, (int)cardRec.Y + 30, 8, wpCol);
 
             string weakTxt = $"P.DÉBIL: {entry.Weakpoints}";
-            if (weakTxt.Length > 20) weakTxt = weakTxt.Substring(0, 18) + "..";
-            Raylib.DrawText(weakTxt, textX, (int)cardRec.Y + 46, 7, Color.LightGray);
+            if (weakTxt.Length > 25) weakTxt = weakTxt.Substring(0, 23) + "..";
+            Raylib.DrawText(weakTxt, textX, (int)cardRec.Y + 41, 7, Color.LightGray);
+
+            factionIdx++;
         }
 
         // 4. Detailed Tactical Intel Dossier Panel
-        Rectangle dossierRec = new(35, 348, 1210, 304);
+        Rectangle dossierRec = new(35, 332, 1210, 320);
         var sel = entries[_selectedBestiaryIndex];
-        Color dossierBorder = sel.Faction == Faction.Terminids ? Constants.OrangeHazard : Constants.DemocracyRed;
+        Color dossierBorder = sel.Faction == Faction.Terminids ? Constants.OrangeHazard :
+                              (sel.Faction == Faction.Illuminate ? Constants.IlluminateMagenta : Constants.DemocracyRed);
         DrawTacticalPanel(dossierRec, dossierBorder, new Color(10, 16, 28, 252));
 
         // Dossier Header bar inside
-        Rectangle dBar = new(35, 348, 1210, 24);
-        Raylib.DrawRectangleRec(dBar, sel.Faction == Faction.Terminids ? new Color(38, 24, 12, 255) : new Color(38, 14, 18, 255));
+        Rectangle dBar = new(35, 332, 1210, 24);
+        Color dBarCol = sel.Faction == Faction.Terminids ? new Color(38, 24, 12, 255) :
+                        (sel.Faction == Faction.Illuminate ? new Color(42, 16, 56, 255) : new Color(38, 14, 18, 255));
+        Raylib.DrawRectangleRec(dBar, dBarCol);
         Raylib.DrawRectangleLinesEx(dBar, 1, dossierBorder);
         Raylib.DrawText("[ ARCHIVO DE INTELIGENCIA DE SUPER TIERRA // DATOS BALÍSTICOS Y BIOMÉTRICOS ]", (int)dBar.X + 16, (int)dBar.Y + 6, 10, Constants.Gold);
         Raylib.DrawText("ESTADO: REGISTRO ACTIVO // ACCESO: NIVEL HELLDIVER", (int)dBar.X + (int)dBar.Width - 325, (int)dBar.Y + 6, 9, Constants.Cyan);
 
         // Section A: Holographic Target Scanner (Left)
-        Rectangle scanRec = new(50, 378, 220, 260);
+        Rectangle scanRec = new(50, 362, 220, 276);
         Raylib.DrawRectangleRec(scanRec, new Color(6, 10, 18, 255));
         Raylib.DrawRectangleLinesEx(scanRec, 1, Constants.BorderColor);
 
-        Vector2 scanCenter = new(scanRec.X + scanRec.Width / 2f, scanRec.Y + 115f);
-        Raylib.DrawCircleLines((int)scanCenter.X, (int)scanCenter.Y, 75f, new Color(30, 48, 72, 180));
+        Vector2 scanCenter = new(scanRec.X + scanRec.Width / 2f, scanRec.Y + 120f);
+        Raylib.DrawCircleLines((int)scanCenter.X, (int)scanCenter.Y, 78f, new Color(30, 48, 72, 180));
         Raylib.DrawCircleLines((int)scanCenter.X, (int)scanCenter.Y, 52f, new Color(30, 48, 72, 180));
         Raylib.DrawCircleLines((int)scanCenter.X, (int)scanCenter.Y, 28f, new Color(30, 48, 72, 180));
 
         // Radar scanning beam
         float scanAngle = (float)Raylib.GetTime() * 2.2f;
-        Raylib.DrawLineEx(scanCenter, scanCenter + new Vector2(MathF.Cos(scanAngle), MathF.Sin(scanAngle)) * 77f, 1.5f, new Color(56, 189, 248, 130));
+        Color beamCol = sel.Faction == Faction.Illuminate ? new Color(168, 85, 247, 130) : new Color(56, 189, 248, 130);
+        Raylib.DrawLineEx(scanCenter, scanCenter + new Vector2(MathF.Cos(scanAngle), MathF.Sin(scanAngle)) * 80f, 1.5f, beamCol);
 
-        // AUTHENTIC EXTRACTED PIXEL ART SPRITE RENDER IN SCANNER!
+        // Target rendering fitted in scanner
         float scBob = MathF.Sin((float)Raylib.GetTime() * 2f) * 4f;
-        EnemySpriteManager.DrawSpriteCentered(sel.SpriteKey, scanCenter + new Vector2(0, scBob), 140f, Color.White);
+        Rectangle scanDisplay = new(scanRec.X + 12, scanRec.Y + 22 + scBob, scanRec.Width - 24, 185);
+        EnemySpriteManager.DrawSpriteFit(sel.SpriteKey, scanDisplay, Color.White, padding: 6f);
 
         // Weakpoint target reticle
         float retPulse = 10f + MathF.Sin((float)Raylib.GetTime() * 6f) * 3f;
         Raylib.DrawCircleLines((int)scanCenter.X, (int)scanCenter.Y, retPulse, Constants.DemocracyRed);
 
         // Scanner label
-        string scanLbl = $"ESCÁNER HOLOGRÁFICO // {sel.EnglishName.ToUpper()}";
+        string scanLbl = $"ESCÁNER // {sel.EnglishName.ToUpper()}";
         Raylib.DrawText(scanLbl, (int)scanRec.X + (int)scanRec.Width / 2 - Raylib.MeasureText(scanLbl, 9) / 2, (int)scanRec.Y + (int)scanRec.Height - 20, 9, Constants.LibertyGreen);
 
         // Section B: Classification, Threat & Biometrics (Middle)
         int midX = 285;
-        Raylib.DrawText(sel.Name.ToUpper(), midX, 378, 18, Constants.Gold);
+        Raylib.DrawText(sel.Name.ToUpper(), midX, 362, 18, Constants.Gold);
         string idTxt = $"CODENAME: {sel.Codename.ToUpper()} // ID: {sel.EnglishName.ToUpper()}";
-        Raylib.DrawText(idTxt, midX, 401, 10, Constants.Cyan);
+        Raylib.DrawText(idTxt, midX, 385, 10, Constants.Cyan);
 
         string skulls = "";
         for (int s = 0; s < 4; s++) skulls += (s < sel.ThreatPips ? "💀 " : "░ ");
-        Raylib.DrawText($"NIVEL DE AMENAZA: CLASE {sel.ThreatPips}/4  [{skulls.Trim()}]", midX, 417, 11, Constants.DemocracyRed);
+        Raylib.DrawText($"NIVEL DE AMENAZA: CLASE {sel.ThreatPips}/4  [{skulls.Trim()}]", midX, 401, 11, Constants.DemocracyRed);
 
         // Specs grid box
-        Rectangle specBox = new(midX, 437, 455, 52);
+        Rectangle specBox = new(midX, 421, 455, 52);
         Raylib.DrawRectangleRec(specBox, new Color(14, 22, 36, 255));
         Raylib.DrawRectangleLinesEx(specBox, 1, Constants.BorderColor);
         Raylib.DrawText($"BLINDAJE: {sel.ArmorClass.ToUpper()}", midX + 10, (int)specBox.Y + 8, 9, Constants.SuperEarthYellow);
         Raylib.DrawText($"PUNTO DÉBIL: {sel.Weakpoints.ToUpper()}", midX + 10, (int)specBox.Y + 28, 9, Constants.LibertyGreen);
 
         // Field description
-        Raylib.DrawText("INFORME DE COMBATE DE SUPER TIERRA:", midX, 498, 10, Constants.Gold);
-        DrawTextWrapped(sel.Description, midX, 516, 455, 9, Color.LightGray, 4);
+        Raylib.DrawText("INFORME DE COMBATE DE SUPER TIERRA:", midX, 482, 10, Constants.Gold);
+        DrawTextWrapped(sel.Description, midX, 500, 455, 9, Color.LightGray, 4);
 
         // Section C: Countermeasures & Survival Manual (Right)
         int rightX = 760;
-        Raylib.DrawText("[ PROTOCOLO DE NEUTRALIZACIÓN AUTORIZADO ]", rightX, 378, 12, Constants.Gold);
+        Raylib.DrawText("[ PROTOCOLO DE NEUTRALIZACIÓN AUTORIZADO ]", rightX, 362, 12, Constants.Gold);
 
         // Recommended armament box
-        Rectangle armBox = new(rightX, 400, 470, 64);
+        Rectangle armBox = new(rightX, 384, 470, 64);
         Raylib.DrawRectangleRec(armBox, new Color(14, 22, 36, 255));
         Raylib.DrawRectangleLinesEx(armBox, 1, Constants.BorderColor);
         Raylib.DrawText("ESTRATAGEMAS Y ARMAMENTO EFECTIVO:", rightX + 10, (int)armBox.Y + 8, 9, Constants.Cyan);
         DrawTextWrapped(sel.RecommendedWeapons, rightX + 10, (int)armBox.Y + 26, 450, 9, Color.White, 2);
 
         // Survival guide box
-        Rectangle survBox = new(rightX, 472, 470, 166);
+        Rectangle survBox = new(rightX, 456, 470, 182);
         Raylib.DrawRectangleRec(survBox, new Color(14, 22, 36, 255));
         Raylib.DrawRectangleLinesEx(survBox, 1, Constants.BorderColor);
         Raylib.DrawText("MANUAL DE SUPERVIVENCIA Y EVASIÓN:", rightX + 10, (int)survBox.Y + 8, 9, Constants.DemocracyRed);
@@ -2498,7 +3483,7 @@ public static class Program
         Rectangle btnBack = new(cx - 130, 660, 260, 36);
         DrawButton(btnBack, "VOLVER AL PUENTE (ESC)", Raylib.CheckCollisionPointRec(mouse, btnBack));
 
-        string hint = "Haz clic en cualquier espécimen para inspeccionar su dossier de combate // Usa [ESPACIO] para la Zambullida Táctica en combate.";
+        string hint = "Haz clic en las pestañas para cambiar de facción y selecciona cualquier enemigo para inspeccionar sus debilidades.";
         Raylib.DrawText(hint, cx - Raylib.MeasureText(hint, 9) / 2, 702, 9, new Color(120, 145, 175, 200));
     }
 }

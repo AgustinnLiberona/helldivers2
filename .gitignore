@@ -10,6 +10,7 @@ obj/
 
 # Temporary scratch
 test_crops/
+Assets/Enemies_Backup/
 
 # Save data
 save_data.json

@@ -95,7 +95,8 @@ public class TurretInstance
 {
     public Vector2 Position;
     public float Angle;
-    public float Duration;
+    public float Duration = 25f;
+    public float MaxDuration = 25f;
     public float Cooldown;
     public float FireRate;
     public float Range;

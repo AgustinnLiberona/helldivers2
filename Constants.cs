@@ -20,7 +20,8 @@ public enum GameState
 public enum Faction
 {
     Terminids,
-    Automatons
+    Automatons,
+    Illuminate
 }
 
 public enum MissionType
@@ -28,23 +29,40 @@ public enum MissionType
     Outposts,
     Icbm,
     Seismic,
-    Assassinate
+    Assassinate,
+    EradicateHive,
+    ExtractSamples,
+    HoldTheLine,
+    SabotageFactory
 }
 
 public enum EnemyType
 {
+    // Terminids
     Scavenger,
     Hunter,
     Warrior,
     Spitter,
     Charger,
     Titan,
+
+    // Automatons & Cyborgs
     Trooper,
     Commissar,
     Berserker,
     Devastator,
     Hulk,
-    FactoryStrider
+    FactoryStrider,
+    Hound,
+    Butcher,
+    Warlord,
+
+    // The Illuminate
+    Watcher,
+    Outcast,
+    Tripod,
+    Illusionist,
+    CouncilMember
 }
 
 public enum BulletType
@@ -56,7 +74,12 @@ public enum BulletType
     Acid,
     BotLaser,
     Flame,
-    Rocket
+    Rocket,
+    Railgun,
+    Autocannon,
+    QuasarPlasma,
+    PsionicOrb,
+    PsionicBeam
 }
 
 public static class Constants
@@ -77,4 +100,14 @@ public static class Constants
     public static readonly Color BorderColor = new(51, 65, 85, 255);
     public static readonly Color CardBg = new(13, 21, 34, 255);
     public static readonly Color OrangeHazard = new(249, 115, 22, 255);
+    public static readonly Color TacticalCyan = new(0, 228, 255, 255);
+    public static readonly Color FlameOrange = new(255, 140, 20, 255);
+    public static readonly Color AutomatonRed = new(255, 45, 45, 255);
+    public static readonly Color GunmetalLight = new(78, 86, 98, 255);
+
+    // Illuminate & Cyborg Palette
+    public static readonly Color IlluminateViolet = new(168, 85, 247, 255);
+    public static readonly Color IlluminateMagenta = new(217, 70, 239, 255);
+    public static readonly Color IlluminateCyan = new(34, 211, 238, 255);
+    public static readonly Color CyborgRust = new(180, 83, 9, 255);
 }

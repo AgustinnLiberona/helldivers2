@@ -15,6 +15,10 @@ public class Weapon
     public bool IsDominator { get; set; } = false;
     public bool IsPlasma { get; set; } = false;
     public bool IsExplosive { get; set; } = false;
+    public bool IsFlame { get; set; } = false;
+    public bool IsAutocannon { get; set; } = false;
+    public bool IsRailgun { get; set; } = false;
+    public bool IsQuasar { get; set; } = false;
     public int Pierce { get; set; } = 1;
     public float RangeBonus { get; set; } = 0;
     public int Rpm { get; set; } = 640;
@@ -130,6 +134,74 @@ public static class WeaponRegistry
             Rpm = 250,
             SpecialTrait = "100 Directo + 100 Área (200 Total)",
             Icon = "[PL]"
+        },
+        ["flamethrower"] = new Weapon
+        {
+            Key = "flamethrower",
+            Name = "Lanzallamas FLAM-40",
+            TypeLabel = "Soporte Incendiario",
+            Description = "Proyecta un torrente continuo de napalm a presión que calcina hordas e ignora armaduras ligeras.",
+            Damage = 28,
+            FireRate = 0.05f,
+            Ammo = 220,
+            Pellets = 3,
+            IsFlame = true,
+            Rpm = 1200,
+            SpecialTrait = "Chorro de Fuego Continuo en Cono",
+            Icon = "[FL]"
+        },
+        ["autocannon"] = new Weapon
+        {
+            Key = "autocannon",
+            Name = "Autocañón AC-8",
+            TypeLabel = "Cañón Pesado Balístico",
+            Description = "Cañón de 20mm semiautomático con munición explosiva perforante capaz de demoler blindajes y fábricas.",
+            Damage = 380,
+            FireRate = 0.32f,
+            Ammo = 12,
+            Pellets = 1,
+            Knockback = 20f,
+            IsExplosive = true,
+            IsAutocannon = true,
+            Pierce = 3,
+            Rpm = 185,
+            SpecialTrait = "380 Daño + Detonación Perforante",
+            Icon = "[AC]"
+        },
+        ["railgun"] = new Weapon
+        {
+            Key = "railgun",
+            Name = "Cañón de Riel RS-422",
+            TypeLabel = "Anti-Material Magnético",
+            Description = "Acelerador electromagnético lineal que dispara un dardo de tungsteno hiper-acelerado que atraviesa cualquier objetivo.",
+            Damage = 750,
+            FireRate = 0.85f,
+            Ammo = 20,
+            Pellets = 1,
+            Knockback = 28f,
+            IsRailgun = true,
+            Pierce = 99,
+            RangeBonus = 400f,
+            Rpm = 70,
+            SpecialTrait = "Perforación Total + 750 Daño",
+            Icon = "[RL]"
+        },
+        ["quasar"] = new Weapon
+        {
+            Key = "quasar",
+            Name = "Cañón Quásar LAS-99",
+            TypeLabel = "Energía Pesada Infinita",
+            Description = "Condensador de plasma estelar que dispara una esfera de energía devastadora. Sin consumo de munición balística.",
+            Damage = 950,
+            FireRate = 1.35f,
+            Ammo = 999,
+            Pellets = 1,
+            Knockback = 35f,
+            IsExplosive = true,
+            IsQuasar = true,
+            Rpm = 44,
+            SpecialTrait = "Munición Infinita + Pulso 950 Daño",
+            Icon = "[QS]"
         }
     };
 

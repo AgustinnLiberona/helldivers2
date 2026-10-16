@@ -38,6 +38,15 @@ public class Player
     public float GuardDogCooldown = 0f;
 
     public Enemy? AimTarget = null;
+    private float _emptyClickTimer = 0f;
+
+    public void Reload(Action? onReloadSfx = null)
+    {
+        if (IsReloading || Ammo >= MaxAmmo) return;
+        IsReloading = true;
+        ReloadTimer = ReloadDuration;
+        onReloadSfx?.Invoke();
+    }
 
     public void Reset(SaveData save)
     {
@@ -81,10 +90,11 @@ public class Player
         DiveVelocity = dir * 14.5f;
     }
 
-    public void Update(float dt, Vector2 moveInput, List<Enemy> enemies, Action<Bullet> spawnBullet, Action<Particle> spawnParticle, Action playShootSfx, Vector2? mouseWorld = null, bool autoAim = true, bool isFiring = false)
+    public void Update(float dt, Vector2 moveInput, List<Enemy> enemies, Action<Bullet> spawnBullet, Action<Particle> spawnParticle, Action playShootSfx, Vector2? mouseWorld = null, bool autoAim = true, bool isFiring = false, Action? onReload = null, Action? onEmpty = null)
     {
         if (DiveCooldown > 0f) DiveCooldown -= dt;
         if (MuzzleFlash > 0f) MuzzleFlash -= dt;
+        if (_emptyClickTimer > 0f) _emptyClickTimer -= dt;
 
         if (IsDiving)
         {
@@ -147,7 +157,7 @@ public class Player
         if (autoAim)
         {
             UpdateAim(enemies);
-            UpdateShooting(dt, spawnBullet, spawnParticle, playShootSfx);
+            UpdateShooting(dt, spawnBullet, spawnParticle, playShootSfx, forceShoot: isFiring, onReload: onReload, onEmpty: onEmpty);
         }
         else
         {
@@ -156,7 +166,7 @@ public class Player
                 var diff = mouseWorld.Value - Position;
                 Angle = MathF.Atan2(diff.Y, diff.X);
             }
-            UpdateShooting(dt, spawnBullet, spawnParticle, playShootSfx, forceShoot: isFiring);
+            UpdateShooting(dt, spawnBullet, spawnParticle, playShootSfx, forceShoot: isFiring, onReload: onReload, onEmpty: onEmpty);
         }
 
         // Guard Dog Drone logic
@@ -225,13 +235,18 @@ public class Player
         }
     }
 
-    private void UpdateShooting(float dt, Action<Bullet> spawnBullet, Action<Particle> spawnParticle, Action playShootSfx, bool forceShoot = false)
+    private void UpdateShooting(float dt, Action<Bullet> spawnBullet, Action<Particle> spawnParticle, Action playShootSfx, bool forceShoot = false, Action? onReload = null, Action? onEmpty = null)
     {
         if (FireCooldown > 0f) FireCooldown -= dt;
 
         if (IsReloading)
         {
             ReloadTimer -= dt;
+            if (forceShoot && _emptyClickTimer <= 0f)
+            {
+                _emptyClickTimer = 0.28f;
+                onEmpty?.Invoke();
+            }
             if (ReloadTimer <= 0f)
             {
                 IsReloading = false;
@@ -242,8 +257,17 @@ public class Player
 
         if (Ammo <= 0)
         {
-            IsReloading = true;
-            ReloadTimer = ReloadDuration;
+            if (!IsReloading)
+            {
+                IsReloading = true;
+                ReloadTimer = ReloadDuration;
+                onReload?.Invoke();
+            }
+            if (forceShoot && _emptyClickTimer <= 0f)
+            {
+                _emptyClickTimer = 0.28f;
+                onEmpty?.Invoke();
+            }
             return;
         }
 
@@ -274,16 +298,26 @@ public class Player
         });
 
         int pellets = CurrentWeapon.Pellets;
-        float bulletSpeed = CurrentWeapon.IsLaser ? 24f : (CurrentWeapon.IsPlasma ? 14f : (CurrentWeapon.IsDominator ? 15f : 18f));
+        float bulletSpeed = CurrentWeapon.IsFlame ? 11f :
+            (CurrentWeapon.IsRailgun ? 38f :
+            (CurrentWeapon.IsAutocannon ? 22f :
+            (CurrentWeapon.IsQuasar ? 16f :
+            (CurrentWeapon.IsLaser ? 24f :
+            (CurrentWeapon.IsPlasma ? 14f :
+            (CurrentWeapon.IsDominator ? 15f : 18f))))));
 
         BulletType bType = BulletType.Standard;
-        if (CurrentWeapon.IsLaser) bType = BulletType.Laser;
+        if (CurrentWeapon.IsFlame) bType = BulletType.Flame;
+        else if (CurrentWeapon.IsRailgun) bType = BulletType.Railgun;
+        else if (CurrentWeapon.IsAutocannon) bType = BulletType.Autocannon;
+        else if (CurrentWeapon.IsQuasar) bType = BulletType.QuasarPlasma;
+        else if (CurrentWeapon.IsLaser) bType = BulletType.Laser;
         else if (CurrentWeapon.IsPlasma) bType = BulletType.Plasma;
         else if (CurrentWeapon.IsDominator) bType = BulletType.Dominator;
 
         for (int i = 0; i < pellets; i++)
         {
-            float spread = ((float)rnd.NextDouble() - 0.5f) * (pellets > 1 ? (CurrentWeapon.Knockback > 0 ? 0.28f : 0.35f) : 0.035f);
+            float spread = ((float)rnd.NextDouble() - 0.5f) * (CurrentWeapon.IsFlame ? 0.38f : (pellets > 1 ? (CurrentWeapon.Knockback > 0 ? 0.28f : 0.35f) : 0.035f));
             float shootAngle = Angle + spread;
 
             spawnBullet(new Bullet
@@ -295,7 +329,7 @@ public class Player
                 Knockback = CurrentWeapon.Knockback,
                 Type = bType,
                 IsPlayerBullet = true,
-                Life = CurrentWeapon.RangeBonus > 0 ? 1.6f : 1.1f
+                Life = CurrentWeapon.IsFlame ? 0.45f : (CurrentWeapon.RangeBonus > 0 ? 1.6f : 1.1f)
             });
         }
     }

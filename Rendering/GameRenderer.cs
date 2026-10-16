@@ -25,19 +25,16 @@ public static class GameRenderer
     private static readonly Color Red500    = new(239, 68, 68, 255);
     private static readonly Color Orange500 = new(249, 115, 22, 255);
     private static readonly Color ShadowCol = new(0, 0, 0, 90);
+    private static readonly Color GunmetalLight = new(148, 163, 184, 255);
+    private static readonly Color OutlineBlack  = new(8, 12, 18, 255);
+    private static readonly Color SuperEarthYellow = Constants.SuperEarthYellow;
 
     // ─── WORLD ──────────────────────────────────────────────────────
     public static void DrawWorld(Camera2D camera, Campaign campaign, List<Vector2> terrainRocks,
         Vector2 extractionPos, bool extractionActive, bool pelicanLanded, float extractionTimer, Player player)
     {
-        Color bgColor = campaign.Planet.Biome switch
-        {
-            "creek"    => new Color(6, 13, 16, 255),
-            "hellmire" => new Color(23, 9, 6, 255),
-            "crimsika" => new Color(17, 11, 8, 255),
-            _          => new Color(10, 16, 27, 255)
-        };
-        Raylib.DrawRectangle(0, 0, (int)Constants.WorldSize, (int)Constants.WorldSize, bgColor);
+        // 1. Procedural Pixel-Art Biome Tiles and Weather
+        ProceduralAssetRenderer.DrawPlanetGroundAndWeather(campaign.Planet.Name, camera, Raylib.GetScreenWidth(), Raylib.GetScreenHeight(), (float)Raylib.GetTime());
 
         // Subtle tactical grid
         Color gridColor = campaign.Planet.Faction == Faction.Automatons
@@ -123,6 +120,91 @@ public static class GameRenderer
             }
         }
 
+        // Objectives: Muestras Científicas Super-Raras (ExtractSamples)
+        for (int s = 0; s < campaign.SampleContainers.Count; s++)
+        {
+            Vector2 sPos = campaign.SampleContainers[s];
+            bool collected = s < campaign.SamplesCollected.Count && campaign.SamplesCollected[s];
+            if (!collected)
+            {
+                float time = (float)Raylib.GetTime();
+                float pulse = 16f + MathF.Sin(time * 6f + s) * 5f;
+                Raylib.DrawCircleV(sPos, pulse, new Color(56, 189, 248, 60));
+                Raylib.DrawCircleLines((int)sPos.X, (int)sPos.Y, pulse + 6f, Constants.Cyan);
+                // Canister cápsula
+                Raylib.DrawRectangle((int)sPos.X - 8, (int)sPos.Y - 14, 16, 28, Slate900);
+                Raylib.DrawRectangleLinesEx(new Rectangle(sPos.X - 8, sPos.Y - 14, 16, 28), 1.5f, Constants.Cyan);
+                Raylib.DrawRectangle((int)sPos.X - 5, (int)sPos.Y - 6, 10, 12, new Color(34, 197, 94, 220));
+                string sLabel = $"MUESTRA #{s + 1}";
+                Raylib.DrawText(sLabel, (int)sPos.X - Raylib.MeasureText(sLabel, 10) / 2, (int)sPos.Y + 18, 10, Constants.Cyan);
+            }
+            else
+            {
+                Raylib.DrawCircleLines((int)sPos.X, (int)sPos.Y, 12f, new Color(34, 197, 94, 120));
+                Raylib.DrawText("✓", (int)sPos.X - 4, (int)sPos.Y - 6, 12, Constants.LibertyGreen);
+            }
+        }
+
+        // Objectives: Relé de Transmisión Defensivo (HoldTheLine)
+        if (campaign.Mission.Type == MissionType.HoldTheLine && campaign.DefensePos != Vector2.Zero)
+        {
+            Vector2 dPos = campaign.DefensePos;
+            float time = (float)Raylib.GetTime();
+
+            // Domo de protección
+            float domeR = 140f;
+            Raylib.DrawCircleLines((int)dPos.X, (int)dPos.Y, domeR, new Color(56, 189, 248, 110));
+            Raylib.DrawCircleV(dPos, domeR, new Color(56, 189, 248, 15));
+
+            // Estructura del Relé de Comunicaciones
+            Raylib.DrawCircleV(dPos, 36f, Slate900);
+            Raylib.DrawCircleLines((int)dPos.X, (int)dPos.Y, 36f, Constants.Gold);
+            Raylib.DrawCircleV(dPos, 20f, Slate800);
+            Raylib.DrawCircleLines((int)dPos.X, (int)dPos.Y, 20f, Constants.Cyan);
+
+            // Antena parabólica giratoria
+            float dishAngle = time * 1.8f;
+            Vector2 dishTip = dPos + new Vector2(MathF.Cos(dishAngle), MathF.Sin(dishAngle)) * 26f;
+            Raylib.DrawLineEx(dPos, dishTip, 3f, Constants.Gold);
+            Raylib.DrawCircleV(dishTip, 5f, Constants.DemocracyRed);
+
+            // Barras de progreso / salud del relé
+            string defTxt = campaign.DefenseTimer <= 0 ? "RELÉ TRANSMITIENDO DATOS: ¡DEFENDIDO!" : $"DEFENDIENDO RELÉ: {campaign.DefenseTimer:0.0}s";
+            Color defCol = campaign.DefenseTimer <= 0 ? Constants.LibertyGreen : Constants.Gold;
+            Raylib.DrawText(defTxt, (int)dPos.X - Raylib.MeasureText(defTxt, 13) / 2, (int)dPos.Y - 58, 13, defCol);
+
+            // Barra de HP del relé
+            float hpPct = Math.Clamp(campaign.DefenseStationHp / campaign.DefenseStationMaxHp, 0f, 1f);
+            Raylib.DrawRectangle((int)dPos.X - 50, (int)dPos.Y - 42, 100, 6, Slate900);
+            Raylib.DrawRectangle((int)dPos.X - 50, (int)dPos.Y - 42, (int)(100 * hpPct), 6, Constants.LibertyGreen);
+            Raylib.DrawRectangleLines((int)dPos.X - 50, (int)dPos.Y - 42, 100, 6, Color.DarkGray);
+        }
+
+        // Objectives: Nodos de Sabotaje (SabotageFactory)
+        foreach (var node in campaign.SabotageNodes)
+        {
+            Vector2 nPos = node.Position;
+            Color nodeCol = node.Completed ? Constants.LibertyGreen : (node.Active ? Constants.DemocracyRed : Constants.OrangeHazard);
+            Raylib.DrawCircleV(nPos, node.Radius, node.Completed ? new Color(20, 24, 32, 180) : new Color(30, 16, 18, 220));
+            Raylib.DrawCircleLines((int)nPos.X, (int)nPos.Y, node.Radius, nodeCol);
+
+            // Núcleo del reactor industrial
+            Raylib.DrawRectangle((int)nPos.X - 16, (int)nPos.Y - 16, 32, 32, Slate900);
+            Raylib.DrawRectangleLinesEx(new Rectangle(nPos.X - 16, nPos.Y - 16, 32, 32), 2, nodeCol);
+
+            if (!node.Completed)
+            {
+                byte pulse = (byte)(140 + MathF.Sin((float)Raylib.GetTime() * 10f) * 110);
+                Raylib.DrawCircleV(nPos, 8f, new Color(255, 45, 45, (int)pulse));
+                string nTxt = node.Active ? $"CARGA: {Math.Round((node.Progress / node.MaxProgress) * 100)}%" : $"NODO #{node.Id}";
+                Raylib.DrawText(nTxt, (int)nPos.X - Raylib.MeasureText(nTxt, 11) / 2, (int)nPos.Y + 22, 11, nodeCol);
+            }
+            else
+            {
+                Raylib.DrawText("DETONADO", (int)nPos.X - Raylib.MeasureText("DETONADO", 11) / 2, (int)nPos.Y - 6, 11, Constants.LibertyGreen);
+            }
+        }
+
         // Extraction Zone & 350m Perimeter
         if (extractionActive)
         {
@@ -156,47 +238,7 @@ public static class GameRenderer
 
     private static void DrawPelican(Vector2 pos)
     {
-        // Ground shadow
-        Raylib.DrawEllipse((int)pos.X, (int)pos.Y + 8, 56, 36, new Color(0, 0, 0, 120));
-
-        // Swept wings
-        Raylib.DrawTriangle(
-            new Vector2(pos.X - 64, pos.Y + 12),
-            new Vector2(pos.X + 64, pos.Y + 12),
-            new Vector2(pos.X, pos.Y - 16), Slate800);
-        Raylib.DrawTriangle(
-            new Vector2(pos.X - 62, pos.Y + 10),
-            new Vector2(pos.X + 62, pos.Y + 10),
-            new Vector2(pos.X, pos.Y - 14), Slate900);
-        // Engine nacelles
-        Raylib.DrawRectangle((int)pos.X - 60, (int)pos.Y + 4, 10, 10, Slate700);
-        Raylib.DrawRectangle((int)pos.X + 50, (int)pos.Y + 4, 10, 10, Slate700);
-        Raylib.DrawRectangle((int)pos.X - 58, (int)pos.Y + 6, 6, 6, Constants.Cyan);
-        Raylib.DrawRectangle((int)pos.X + 52, (int)pos.Y + 6, 6, 6, Constants.Cyan);
-
-        // Fuselage
-        Raylib.DrawRectangle((int)pos.X - 18, (int)pos.Y - 40, 36, 62, Slate900);
-        Raylib.DrawRectangleLinesEx(new Rectangle(pos.X - 18, pos.Y - 40, 36, 62), 1, Slate700);
-        // Nose cone
-        Raylib.DrawTriangle(
-            new Vector2(pos.X - 18, pos.Y - 40),
-            new Vector2(pos.X + 18, pos.Y - 40),
-            new Vector2(pos.X, pos.Y - 54), Slate900);
-        // Cockpit canopy
-        Raylib.DrawTriangle(
-            new Vector2(pos.X - 8, pos.Y - 34),
-            new Vector2(pos.X + 8, pos.Y - 34),
-            new Vector2(pos.X, pos.Y - 48), Constants.Gold);
-        // Hull stripe
-        Raylib.DrawRectangle((int)pos.X - 16, (int)pos.Y - 10, 32, 3, Constants.Gold);
-        // Label
-        Raylib.DrawText("SE", (int)pos.X - 6, (int)pos.Y - 6, 10, Constants.Gold);
-
-        // Rear boarding ramp
-        Raylib.DrawRectangle((int)pos.X - 14, (int)pos.Y + 22, 28, 20, Amber500);
-        Raylib.DrawRectangleLinesEx(new Rectangle(pos.X - 14, pos.Y + 22, 28, 20), 2, Constants.LibertyGreen);
-        // Chevrons on ramp
-        Raylib.DrawText("▲", (int)pos.X - 5, (int)pos.Y + 26, 12, Constants.LibertyGreen);
+        ProceduralAssetRenderer.DrawPelican1(pos, 0f, 0f, (float)Raylib.GetTime());
     }
 
     // ─── TERMINID ENEMIES ───────────────────────────────────────────
@@ -241,20 +283,39 @@ public static class GameRenderer
 
     private static void DrawEnemyOverlays(Enemy e)
     {
+        // Resplandor del Escudo de Energía Esférico de los Iluminados
+        if (e.ShieldHp > 0f && e.MaxShieldHp > 0f)
+        {
+            float sRatio = Math.Clamp(e.ShieldHp / e.MaxShieldHp, 0f, 1f);
+            float shieldR = e.Radius * 1.35f + MathF.Sin((float)Raylib.GetTime() * 8f + e.Id) * 2f;
+            byte alpha = (byte)(80 + sRatio * 110);
+            Raylib.DrawCircleLines((int)e.Position.X, (int)e.Position.Y, shieldR, new Color(168, 85, 247, (int)alpha));
+            Raylib.DrawCircleLines((int)e.Position.X, (int)e.Position.Y, shieldR - 2f, new Color(34, 211, 238, (int)(alpha * 0.7f)));
+            Raylib.DrawCircleV(e.Position, shieldR, new Color(168, 85, 247, (int)(alpha * 0.14f)));
+        }
+
         // Health bar & HVT indicator above enemy
-        if (e.Hp < e.MaxHp || e.IsHvt)
+        if (e.Hp < e.MaxHp || (e.MaxShieldHp > 0 && e.ShieldHp < e.MaxShieldHp) || e.IsHvt)
         {
             float barW = Math.Clamp(e.Radius * 1.5f, 26f, 56f);
             float barH = e.IsHvt ? 5f : 3.5f;
             float barX = e.Position.X - barW / 2f;
             float barY = e.Position.Y - e.Radius - (e.IsHvt ? 16f : 11f);
 
+            // Shield Bar (si la unidad tiene escudos de energía)
+            if (e.MaxShieldHp > 0f && e.ShieldHp > 0f)
+            {
+                float sPct = Math.Clamp(e.ShieldHp / e.MaxShieldHp, 0f, 1f);
+                Raylib.DrawRectangle((int)barX, (int)barY - 4, (int)(barW * sPct), 3, Constants.IlluminateCyan);
+                Raylib.DrawRectangleLines((int)barX, (int)barY - 4, (int)barW, 3, Constants.IlluminateViolet);
+            }
+
             // Background
             Raylib.DrawRectangle((int)barX, (int)barY, (int)barW, (int)barH, new Color(15, 23, 42, 220));
 
             // Health Fill
             float hpPct = Math.Clamp(e.Hp / e.MaxHp, 0f, 1f);
-            Color fillCol = e.IsHvt ? Constants.Gold : (e.Faction == Faction.Terminids ? Constants.OrangeHazard : Constants.DemocracyRed);
+            Color fillCol = e.IsHvt ? Constants.Gold : (e.Faction == Faction.Terminids ? Constants.OrangeHazard : (e.Faction == Faction.Illuminate ? Constants.IlluminateMagenta : Constants.DemocracyRed));
             Raylib.DrawRectangle((int)barX, (int)barY, (int)(barW * hpPct), (int)barH, fillCol);
 
             // Border
@@ -265,7 +326,7 @@ public static class GameRenderer
             {
                 string tag = "★ OBJETIVO";
                 int tagW = Raylib.MeasureText(tag, 9);
-                Raylib.DrawText(tag, (int)e.Position.X - tagW / 2, (int)barY - 11, 9, Constants.Gold);
+                Raylib.DrawText(tag, (int)e.Position.X - tagW / 2, (int)(barY - (e.MaxShieldHp > 0 ? 17f : 12f)), 9, Constants.Gold);
             }
         }
     }
@@ -556,8 +617,14 @@ public static class GameRenderer
         // Ground shadow
         Raylib.DrawEllipse(0, 6, (int)(r * 1.1f), (int)(r * 0.65f), ShadowCol);
 
-        if (e.Type == EnemyType.Hulk || (e.IsHvt && e.Faction == Faction.Automatons))
+        if (e.Type == EnemyType.Hulk || (e.IsHvt && e.Type == EnemyType.Hulk))
             DrawHulk(e, r);
+        else if (e.Type == EnemyType.Warlord || (e.IsHvt && e.Type == EnemyType.Warlord))
+            DrawWarlord(e, r);
+        else if (e.Type == EnemyType.Butcher)
+            DrawButcher(e, r);
+        else if (e.Type == EnemyType.Hound)
+            DrawHound(e, r);
         else if (e.Type == EnemyType.Berserker)
             DrawBerserker(e, r);
         else if (e.Type == EnemyType.Devastator)
@@ -812,6 +879,383 @@ public static class GameRenderer
         Raylib.DrawLineEx(new Vector2(14, 8), new Vector2(28, 12), 1f, Color.White);
     }
 
+    private static void DrawHound(Enemy e, float r)
+    {
+        // 4 Patas mecánicas articuladas con ciclo de carrera rápido
+        float runCycle = e.WalkCycle * 2.2f;
+        for (int side = -1; side <= 1; side += 2)
+        {
+            float fSwing = MathF.Sin(runCycle) * 7f;
+            float bSwing = MathF.Cos(runCycle) * 7f;
+
+            // Pata delantera
+            Raylib.DrawLineEx(new Vector2(6, side * 7f), new Vector2(14 + fSwing, side * 14f), 2.5f, Slate700);
+            Raylib.DrawCircleV(new Vector2(14 + fSwing, side * 14f), 2f, Slate900);
+
+            // Pata trasera
+            Raylib.DrawLineEx(new Vector2(-10, side * 8f), new Vector2(-16 - bSwing, side * 16f), 3.0f, Slate700);
+            Raylib.DrawCircleV(new Vector2(-16 - bSwing, side * 16f), 2f, Slate900);
+        }
+
+        // Lomo biomecánico con columna vertebral de acero y cables rojos
+        Raylib.DrawEllipse(0, 0, (int)(r * 0.9f), (int)(r * 0.45f), Slate800);
+        Raylib.DrawEllipseLines(0, 0, (int)(r * 0.9f), (int)(r * 0.45f), Slate600);
+        Raylib.DrawLineEx(new Vector2(-r * 0.7f, 0), new Vector2(r * 0.4f, 0), 2f, Red500);
+
+        // Cráneo cibernético afilado con visor mono-óptico rojo
+        Raylib.DrawTriangle(
+            new Vector2(r * 0.35f, -6),
+            new Vector2(r * 0.35f, 6),
+            new Vector2(r + 10f, 0),
+            Slate900);
+        Raylib.DrawRectangle((int)(r * 0.45f), -2, 5, 4, Red500);
+        Raylib.DrawRectangle((int)(r * 0.55f), -1, 2, 2, Color.White);
+
+        // Mandíbulas metálicas de acero
+        Raylib.DrawLineEx(new Vector2(r * 0.4f, -4), new Vector2(r + 11f, -2), 1.5f, GunmetalLight);
+        Raylib.DrawLineEx(new Vector2(r * 0.4f, 4), new Vector2(r + 11f, 2), 1.5f, GunmetalLight);
+
+        // Cola sensor de alambre
+        Raylib.DrawLineEx(new Vector2(-r * 0.8f, 0), new Vector2(-r * 1.3f, MathF.Sin(runCycle * 1.5f) * 4f), 1.5f, Slate600);
+    }
+
+    private static void DrawButcher(Enemy e, float r)
+    {
+        // Piernas pesadas con pistones hidráulicos
+        float lBob = MathF.Sin(e.WalkCycle * 1.6f) * 4f;
+        Raylib.DrawRectangle(-14, -22 + (int)lBob, 14, 10, Slate800);
+        Raylib.DrawRectangle(-14, 12 - (int)lBob, 14, 10, Slate800);
+
+        // Torso musculoso blindado con blindaje oxidado / Cyborg
+        Raylib.DrawRectangle(-16, -18, 32, 36, Slate900);
+        Raylib.DrawRectangleLinesEx(new Rectangle(-16, -18, 32, 36), 2, Constants.CyborgRust);
+
+        // Columna vertebral mecánica expuesta con tubos de suero
+        Raylib.DrawLineEx(new Vector2(-12, -10), new Vector2(-12, 10), 3f, Red700);
+        Raylib.DrawCircle(-2, 0, 5, Constants.OrangeHazard);
+
+        // Cabeza con máscara de hierro y visores rojos duales
+        Raylib.DrawCircle(14, 0, 9, Slate900);
+        Raylib.DrawCircleLines(14, 0, 9, Slate700);
+        Raylib.DrawRectangle(17, -4, 4, 3, Red500);
+        Raylib.DrawRectangle(17, 1, 4, 3, Red500);
+
+        // Brazos gigantes con HACHAS / MACHETES DE CARNICERO SERRADOS
+        for (int side = -1; side <= 1; side += 2)
+        {
+            int cy = side * 24;
+            // Brazo cibernético
+            Raylib.DrawRectangle(0, cy - 4, 22, 8, Slate700);
+            Raylib.DrawRectangleLines(0, cy - 4, 22, 8, Slate900);
+
+            // Hoja masiva del machete
+            Vector2 bladeTip = new(38, cy - side * 6);
+            Raylib.DrawTriangle(
+                new Vector2(18, cy - 8),
+                new Vector2(18, cy + 8),
+                bladeTip,
+                GunmetalLight);
+            Raylib.DrawLineEx(new Vector2(18, cy - 8), bladeTip, 2f, Color.White); // Filo afilado
+            Raylib.DrawCircleV(new Vector2(24, cy), 3f, Red700); // Manchas de combate
+
+            // Chispas al atacar
+            if (e.InAttackRange)
+            {
+                float spAngle = (float)Raylib.GetTime() * 25f + side;
+                Raylib.DrawCircleV(bladeTip + new Vector2(MathF.Cos(spAngle) * 5f, MathF.Sin(spAngle) * 5f), 2f, Constants.Gold);
+            }
+        }
+    }
+
+    private static void DrawWarlord(Enemy e, float r)
+    {
+        // 4 Patas tractoras de soporte pesado
+        for (int side = -1; side <= 1; side += 2)
+        {
+            float lSwing = MathF.Sin(e.WalkCycle) * 3f;
+            Raylib.DrawRectangle(-24, side * 30 - 6, 28, 12, Slate800);
+            Raylib.DrawRectangleLines(-24, side * 30 - 6, 28, 12, Slate600);
+            Raylib.DrawRectangle(6, side * 30 - 6, 24, 12, Slate800);
+            Raylib.DrawRectangleLines(6, side * 30 - 6, 24, 12, Slate600);
+        }
+
+        // Chasis acorazado central masivo
+        Rectangle chassis = new(-r * 0.7f, -r * 0.75f, r * 1.4f, r * 1.5f);
+        Raylib.DrawRectangleRec(chassis, Slate900);
+        Raylib.DrawRectangleLinesEx(chassis, 2.5f, Slate600);
+
+        // Escudo deflector frontal inclinado con franjas amarillas de advertencia
+        Rectangle shieldPlate = new(r * 0.15f, -r * 0.85f, 16, r * 1.7f);
+        Raylib.DrawRectangleRec(shieldPlate, Slate800);
+        Raylib.DrawRectangleLinesEx(shieldPlate, 2f, Constants.OrangeHazard);
+        for (int i = 0; i < 4; i++)
+        {
+            Raylib.DrawLineEx(new Vector2(shieldPlate.X + 2, shieldPlate.Y + 8 + i * 16), new Vector2(shieldPlate.X + 12, shieldPlate.Y + 16 + i * 16), 2f, SuperEarthYellow);
+        }
+
+        // Batería de 6 cohetes montada en el techo (2x3)
+        Rectangle rocketBox = new(-12, -18, 22, 36);
+        Raylib.DrawRectangleRec(rocketBox, Slate900);
+        Raylib.DrawRectangleLinesEx(rocketBox, 1.5f, Red700);
+        for (int ry = -12; ry <= 12; ry += 12)
+        {
+            Raylib.DrawCircle(0, ry, 3.5f, Red500);
+            Raylib.DrawCircle(0, ry, 1.5f, Color.White);
+        }
+
+        // Cañones automáticos pesados gemelos en los flancos frontales
+        for (int side = -1; side <= 1; side += 2)
+        {
+            float cy = side * (r * 0.65f);
+            Raylib.DrawLineEx(new Vector2(0, cy), new Vector2(r + 28f, cy), 5.5f, OutlineBlack);
+            Raylib.DrawLineEx(new Vector2(0, cy), new Vector2(r + 28f, cy), 3.5f, GunmetalLight);
+            // Frenos de boca dobles
+            Raylib.DrawRectangle((int)(r + 24f), (int)cy - 4, 5, 8, Slate900);
+        }
+
+        // Cúpula del comandante y visor de combate carmesí
+        Raylib.DrawCircle(6, 0, 10, Slate900);
+        Raylib.DrawCircleLines(6, 0, 10, Red700);
+        Raylib.DrawRectangle(10, -3, 6, 6, Red500);
+        Raylib.DrawRectangle(12, -1, 3, 3, Color.White);
+    }
+
+    // ─── THE ILLUMINATE (LOS ILUMINADOS) ─────────────────────────────
+
+    public static void DrawIlluminate(Enemy e)
+    {
+        string spriteKey = EnemySpriteManager.GetSpriteKeyForEnemy(e);
+        if (EnemySpriteManager.HasTexture(spriteKey))
+        {
+            EnemySpriteManager.DrawInGameEnemy(e);
+            return;
+        }
+
+        Vector2 pos = e.Position;
+        float angle = e.FacingAngle;
+        float r = e.Radius;
+
+        Rlgl.PushMatrix();
+        Rlgl.Translatef(pos.X, pos.Y, 0);
+        Rlgl.Rotatef(angle * (180f / MathF.PI), 0, 0, 1);
+
+        // Ground shadow holográfica
+        Raylib.DrawEllipse(0, 5, (int)(r * 1.15f), (int)(r * 0.60f), ShadowCol);
+
+        if (e.Type == EnemyType.CouncilMember || (e.IsHvt && e.Faction == Faction.Illuminate))
+            DrawCouncilMember(e, r);
+        else if (e.Type == EnemyType.Illusionist)
+            DrawIllusionist(e, r);
+        else if (e.Type == EnemyType.Tripod)
+            DrawTripod(e, r);
+        else if (e.Type == EnemyType.Outcast)
+            DrawOutcast(e, r);
+        else
+            DrawWatcher(e, r);
+
+        Rlgl.PopMatrix();
+
+        DrawEnemyOverlays(e);
+    }
+
+    private static void DrawWatcher(Enemy e, float r)
+    {
+        float hover = MathF.Sin(e.WalkCycle * 2f) * 4f;
+
+        // Anillo de sustentación psiónica antigravedad
+        Raylib.DrawCircleLines(0, (int)hover, r * 0.95f, Constants.IlluminateCyan);
+        Raylib.DrawCircle(0, (int)hover, (int)(r * 0.75f), new Color(38, 20, 54, 255));
+        Raylib.DrawCircleLines(0, (int)hover, (int)(r * 0.75f), Constants.IlluminateViolet);
+
+        // 3 Aletas estabilizadoras flotantes
+        for (int a = 0; a < 3; a++)
+        {
+            float finAngle = a * (MathF.PI * 2f / 3f) + (float)Raylib.GetTime() * 2f;
+            Vector2 finPos = new(MathF.Cos(finAngle) * (r * 0.85f), MathF.Sin(finAngle) * (r * 0.85f) + hover);
+            Raylib.DrawCircleV(finPos, 3f, Constants.IlluminateMagenta);
+        }
+
+        // Gran ojo central sensor cíclope parpadeante
+        Raylib.DrawCircle((int)(r * 0.25f), (int)hover, 6f, Constants.IlluminateViolet);
+        Raylib.DrawCircle((int)(r * 0.35f), (int)hover, 3.5f, Constants.IlluminateMagenta);
+        Raylib.DrawCircle((int)(r * 0.40f), (int)hover, 1.5f, Color.White);
+
+        // Cono de escaneo frontal holográfico sutil
+        Raylib.DrawTriangle(
+            new Vector2(r * 0.4f, hover),
+            new Vector2(r + 35f, hover - 18f),
+            new Vector2(r + 35f, hover + 18f),
+            new Color(168, 85, 247, 45));
+    }
+
+    private static void DrawOutcast(Enemy e, float r)
+    {
+        // Túnica violeta oscura flotante con runas doradas
+        float wave = MathF.Sin(e.WalkCycle * 2.5f) * 3f;
+        Raylib.DrawTriangle(
+            new Vector2(-r * 0.8f, -r * 0.6f + wave),
+            new Vector2(-r * 0.8f,  r * 0.6f - wave),
+            new Vector2(r * 0.6f, 0),
+            new Color(32, 16, 48, 255));
+        Raylib.DrawTriangleLines(
+            new Vector2(-r * 0.8f, -r * 0.6f + wave),
+            new Vector2(-r * 0.8f,  r * 0.6f - wave),
+            new Vector2(r * 0.6f, 0),
+            Constants.IlluminateViolet);
+
+        // Capucha y máscara alienígena
+        Raylib.DrawCircle(6, 0, 7f, new Color(18, 10, 28, 255));
+        Raylib.DrawCircleLines(6, 0, 7f, Constants.IlluminateCyan);
+        Raylib.DrawRectangle(9, -2, 4, 4, Constants.IlluminateMagenta);
+        Raylib.DrawRectangle(10, -1, 2, 2, Color.White);
+
+        // ESPADAS PSÍONICAS GEMELAS DE ENERGÍA VIOLETA EN LAS MANOS
+        for (int side = -1; side <= 1; side += 2)
+        {
+            Vector2 hilt = new(8, side * 12f);
+            Vector2 tip = new(r + 18f + e.AttackLunge * 0.5f, side * 16f);
+
+            // Hoja de plasma radiante
+            Raylib.DrawLineEx(hilt, tip, 4.5f, Constants.IlluminateViolet);
+            Raylib.DrawLineEx(hilt, tip, 2.5f, Constants.IlluminateMagenta);
+            Raylib.DrawLineEx(hilt, tip, 1.0f, Color.White);
+            Raylib.DrawCircleV(tip, 2f, Color.White);
+        }
+
+        // Estela de distorsión espacial si se teletransporta
+        if (e.TeleportCooldown > 2.2f)
+        {
+            for (int p = 0; p < 4; p++)
+            {
+                float px = -r * 0.5f - p * 8f;
+                Raylib.DrawCircle((int)px, 0, 4f - p * 0.8f, new Color(217, 70, 239, 120));
+            }
+        }
+    }
+
+    private static void DrawTripod(Enemy e, float r)
+    {
+        // 3 Piernas mecánicas estilizadas de zancudo
+        float[] legAngles = { MathF.PI * 0.5f, MathF.PI * 1.15f, MathF.PI * 1.85f };
+        for (int i = 0; i < legAngles.Length; i++)
+        {
+            float a = legAngles[i];
+            float swing = MathF.Sin(e.WalkCycle + i * 2f) * 6f;
+            Vector2 hip = new(MathF.Cos(a) * 8f, MathF.Sin(a) * 8f);
+            Vector2 knee = new(MathF.Cos(a) * 26f + swing, MathF.Sin(a) * 26f);
+            Vector2 foot = new(MathF.Cos(a) * 44f + swing * 1.5f, MathF.Sin(a) * 44f);
+
+            Raylib.DrawLineEx(hip, knee, 3.5f, Slate700);
+            Raylib.DrawLineEx(knee, foot, 2.2f, Slate600);
+            Raylib.DrawCircleV(foot, 2f, Constants.IlluminateCyan);
+        }
+
+        // Cabina esférica central con cúpula de cristal
+        Raylib.DrawCircle(0, 0, r * 0.65f, new Color(24, 16, 36, 255));
+        Raylib.DrawCircleLines(0, 0, r * 0.65f, Constants.IlluminateViolet);
+        Raylib.DrawCircle(2, 0, r * 0.40f, Constants.IlluminateCyan);
+        Raylib.DrawCircle(4, 0, r * 0.20f, Color.White);
+
+        // Cañón emisor de haz de plasma frontal
+        Raylib.DrawLineEx(new Vector2(r * 0.5f, 0), new Vector2(r + 14f, 0), 4f, OutlineBlack);
+        Raylib.DrawLineEx(new Vector2(r * 0.5f, 0), new Vector2(r + 14f, 0), 2.5f, Constants.IlluminateMagenta);
+        Raylib.DrawCircle((int)(r + 14f), 0, 3f, Color.White);
+    }
+
+    private static void DrawIllusionist(Enemy e, float r)
+    {
+        float hover = MathF.Sin((float)Raylib.GetTime() * 3.5f) * 5f;
+
+        // Manto ceremonial alienígena dorado y púrpura
+        Raylib.DrawPoly(new Vector2(0, hover), 6, r * 0.75f, 30f, new Color(42, 18, 60, 255));
+        Raylib.DrawPolyLines(new Vector2(0, hover), 6, r * 0.75f, 30f, Constants.Gold);
+
+        // Tocado místico y rostro sombrío con ojos violeta
+        Raylib.DrawCircle(8, (int)hover, 8f, Slate900);
+        Raylib.DrawCircleLines(8, (int)hover, 8f, Constants.IlluminateViolet);
+        Raylib.DrawCircle(11, (int)hover - 2, 2.5f, Constants.IlluminateMagenta);
+        Raylib.DrawCircle(11, (int)hover + 2, 2.5f, Constants.IlluminateMagenta);
+        Raylib.DrawCircle(12, (int)hover - 2, 1f, Color.White);
+        Raylib.DrawCircle(12, (int)hover + 2, 1f, Color.White);
+
+        // Báculo psiónico levitando a la derecha
+        Vector2 staffTop = new(16, hover - 22f);
+        Vector2 staffBot = new(10, hover + 22f);
+        Raylib.DrawLineEx(staffBot, staffTop, 3f, Constants.Gold);
+
+        // Orbe psiónico rotando en lo alto del báculo
+        float orbRot = (float)Raylib.GetTime() * 4f;
+        Raylib.DrawCircleV(staffTop, 6f, Constants.IlluminateMagenta);
+        Raylib.DrawCircleV(staffTop, 3.5f, Constants.IlluminateCyan);
+        Raylib.DrawCircleV(staffTop, 1.5f, Color.White);
+
+        // 3 Esquirlas de cristal telequinéticas orbitando el cuerpo
+        for (int s = 0; s < 3; s++)
+        {
+            float sAng = (float)Raylib.GetTime() * 3f + s * (MathF.PI * 2f / 3f);
+            Vector2 sPos = new(MathF.Cos(sAng) * (r * 1.15f), MathF.Sin(sAng) * (r * 0.85f) + hover);
+            Raylib.DrawRectangle((int)sPos.X - 2, (int)sPos.Y - 2, 4, 4, Constants.IlluminateCyan);
+            Raylib.DrawRectangleLines((int)sPos.X - 2, (int)sPos.Y - 2, 4, 4, Color.White);
+        }
+    }
+
+    private static void DrawCouncilMember(Enemy e, float r)
+    {
+        float time = (float)Raylib.GetTime();
+        float hover = MathF.Sin(time * 2.8f) * 6f;
+
+        // 1. Doble anillo orbital de energía psiónica rotatoria
+        Raylib.DrawEllipseLines(0, (int)hover, (int)(r * 1.25f), (int)(r * 0.75f), Constants.IlluminateViolet);
+        Raylib.DrawEllipseLines(0, (int)hover, (int)(r * 1.15f), (int)(r * 0.65f), Constants.IlluminateMagenta);
+
+        // 2. Túnica imperial alienígena majestuosa
+        Raylib.DrawPoly(new Vector2(0, hover), 8, r * 0.80f, time * 15f, new Color(34, 12, 48, 255));
+        Raylib.DrawPolyLines(new Vector2(0, hover), 8, r * 0.80f, time * 15f, Constants.Gold);
+
+        // 3. Núcleo de singularidad de materia oscura central
+        float corePulse = 1f + MathF.Sin(time * 10f) * 0.15f;
+        Raylib.DrawCircle(0, (int)hover, 14f * corePulse, new Color(15, 6, 24, 255));
+        Raylib.DrawCircleLines(0, (int)hover, 14f * corePulse, Constants.IlluminateCyan);
+        Raylib.DrawCircle(0, (int)hover, 6f, Color.White);
+
+        // Arcos eléctricos de energía psiónica
+        for (int a = 0; a < 4; a++)
+        {
+            float aAng = time * 8f + a * 1.57f;
+            Vector2 p1 = new(MathF.Cos(aAng) * 12f, MathF.Sin(aAng) * 12f + hover);
+            Vector2 p2 = new(MathF.Cos(aAng + 0.3f) * (r * 0.85f), MathF.Sin(aAng + 0.3f) * (r * 0.85f) + hover);
+            Raylib.DrawLineEx(p1, p2, 1.5f, Constants.IlluminateCyan);
+        }
+
+        // 4. Cabeza coronada del Sumo Jerarca
+        Raylib.DrawCircle(12, (int)hover, 11f, Slate900);
+        Raylib.DrawCircleLines(12, (int)hover, 11f, Constants.Gold);
+
+        // Corona con picos flotantes
+        for (int p = -2; p <= 2; p++)
+        {
+            float py = hover + p * 5f;
+            Raylib.DrawTriangle(new Vector2(16, py - 2), new Vector2(16, py + 2), new Vector2(25, py), Constants.Gold);
+        }
+
+        // Ojos hipnóticos de energía blanca incandescente
+        Raylib.DrawCircle(17, (int)hover - 4, 3f, Constants.IlluminateMagenta);
+        Raylib.DrawCircle(17, (int)hover + 4, 3f, Constants.IlluminateMagenta);
+        Raylib.DrawCircle(18, (int)hover - 4, 1.5f, Color.White);
+        Raylib.DrawCircle(18, (int)hover + 4, 1.5f, Color.White);
+
+        // 5. Cuatro monolitos protectores flotando en formación
+        for (int m = 0; m < 4; m++)
+        {
+            float mAng = time * 2f + m * (MathF.PI * 0.5f);
+            Vector2 mPos = new(MathF.Cos(mAng) * (r * 1.35f), MathF.Sin(mAng) * (r * 1.35f) + hover);
+            Rectangle mRec = new(mPos.X - 4, mPos.Y - 6, 8, 12);
+            Raylib.DrawRectangleRec(mRec, Slate900);
+            Raylib.DrawRectangleLinesEx(mRec, 1f, Constants.IlluminateCyan);
+            Raylib.DrawCircleV(mPos, 2f, Constants.IlluminateMagenta);
+        }
+    }
+
     public static void DrawEnemyPreview(EnemyType type, Faction faction, Vector2 pos, float scale, float angle = 0f, float walkCycle = 0f)
     {
         var dummy = Enemy.Create(type, faction, pos, isHvt: false);
@@ -826,6 +1270,8 @@ public static class GameRenderer
 
         if (faction == Faction.Terminids)
             DrawTerminid(dummy);
+        else if (faction == Faction.Illuminate)
+            DrawIlluminate(dummy);
         else
             DrawAutomaton(dummy);
 
@@ -926,6 +1372,39 @@ public static class GameRenderer
             Raylib.DrawRectangle(6, 4, 20, 6, Slate800);
             Raylib.DrawRectangle(12, 5, 6, 4, Constants.Cyan);
             Raylib.DrawCircle(24, 7, 2.5f, Constants.Cyan);
+        }
+        else if (wKey == "flamethrower")
+        {
+            // Lanzallamas FLAM-40: tanque cilíndrico, boquilla y llama piloto
+            Raylib.DrawRectangle(6, 3, 22, 7, new Color(160, 80, 20, 255));
+            Raylib.DrawRectangleLines(6, 3, 22, 7, Slate600);
+            Raylib.DrawRectangle(10, 8, 8, 5, new Color(220, 40, 20, 255)); // Tanque napalm
+            Raylib.DrawCircle(28, 6, 3.5f, new Color(255, 140, 20, 230)); // Boquilla piloto
+        }
+        else if (wKey == "autocannon")
+        {
+            // Autocañón AC-8: receptor masivo, cargador de caja superior y cañón 20mm
+            Raylib.DrawRectangle(4, 2, 28, 8, Slate900);
+            Raylib.DrawRectangleLines(4, 2, 28, 8, Slate600);
+            Raylib.DrawRectangle(8, -3, 8, 5, Constants.SuperEarthYellow); // Caja de munición
+            Raylib.DrawRectangle(26, 4, 10, 4, Slate700); // Freno de boca
+            Raylib.DrawRectangle(34, 3, 3, 6, Slate900);
+        }
+        else if (wKey == "railgun")
+        {
+            // Cañón de Riel RS-422: rieles paralelos y bobinas electromagnéticas cyan
+            Raylib.DrawRectangle(6, 4, 28, 6, Slate900);
+            Raylib.DrawRectangleLines(6, 4, 28, 6, Slate700);
+            Raylib.DrawRectangle(12, 5, 14, 2, Constants.Cyan); // Riel de plasma
+            Raylib.DrawCircle(32, 7, 2.5f, Color.White); // Punta aceleradora
+        }
+        else if (wKey == "quasar")
+        {
+            // Cañón Quásar LAS-99: armazón pesado y anillo condensador
+            Raylib.DrawRectangle(4, 2, 26, 10, Slate900);
+            Raylib.DrawRectangleLines(4, 2, 26, 10, Constants.SuperEarthYellow);
+            Raylib.DrawCircle(22, 7, 5f, Constants.Cyan); // Núcleo estelar
+            Raylib.DrawCircle(22, 7, 2.5f, Color.White);
         }
         else
         {

@@ -413,6 +413,138 @@ public static class BestiaryRegistry
             Description = "Nave no tripulada VTOL fuertemente blindada con cañones láser y baterías de cohetes que patrulla zonas de alta prioridad buscando intrusos.",
             TacticalAdvice = "Apunta directamente a uno de sus motores con armas perforantes pesadas para desestabilizarla y provocar que se estrelle.",
             RecommendedWeapons = "Cañón Automático, Cañón de Riel, Torreta Automática."
+        },
+        new BestiaryEntry
+        {
+            Id = "hound",
+            SpriteKey = "hound",
+            Name = "Sabueso Cíborg",
+            EnglishName = "Cyber Hound",
+            Codename = "Canino Cibernético",
+            Faction = Faction.Automatons,
+            EnemyType = EnemyType.Hound,
+            ThreatPips = 2,
+            ArmorClass = "Ligero / Ágil",
+            Weakpoints = "Flancos y cabeza",
+            Description = "Unidad cuadrúpeda canina mecanizada equipada con servomotores de alta aceleración y mandíbulas de titanio. Ejecuta saltos de embestida a 250 px/s para derribar helldivers y dejarlos vulnerables al fuego pesado.",
+            TacticalAdvice = "Realiza una zambullida evasiva [ESPACIO] al escuchar su aullido mecánico y dispárale con escopeta o fusil a quemarropa antes de su siguiente salto.",
+            RecommendedWeapons = "Escopeta Breaker, Subfusil Defender, Liberator."
+        },
+        new BestiaryEntry
+        {
+            Id = "butcher",
+            SpriteKey = "butcher",
+            Name = "Carnicero Pesado",
+            EnglishName = "Butcher",
+            Codename = "Bruto Mutilador",
+            Faction = Faction.Automatons,
+            EnemyType = EnemyType.Butcher,
+            ThreatPips = 3,
+            ArmorClass = "Medio Pesado Blindado",
+            Weakpoints = "Núcleo ventral y articulaciones",
+            Description = "Pesado chasis de asalto equipado con dos enormes cuchillas carniceras oxidadas de aleación pesada. Persigue con paso implacable e inmune al retroceso balístico estándar, infligiendo daño masivo en cuerpo a cuerpo.",
+            TacticalAdvice = "Mantén la distancia. Sus cuchillas bloquean impactos directos frontales, por lo que se recomienda apuntar a las piernas para frenarlo o usar fuego y cañones explosivos.",
+            RecommendedWeapons = "Dominator Jar-5, Cañón Automático, Lanzallamas."
+        },
+        new BestiaryEntry
+        {
+            Id = "warlord",
+            SpriteKey = "warlord",
+            Name = "Señor de la Guerra",
+            EnglishName = "Warlord",
+            Codename = "Dreadnought Blindado",
+            Faction = Faction.Automatons,
+            EnemyType = EnemyType.Warlord,
+            ThreatPips = 4,
+            ArmorClass = "Acorazado Pesado de Asedio",
+            Weakpoints = "Rejilla de escape posterior y visor sensor",
+            Description = "El coloso mecanizado definitivo de la legión cíborg. Equipado con cañón automático pesado doble en un brazo y batería de lanzacohetes pesados en el hombro. Marcha disparando ráfagas continuas y salvas explosivas que barren el terreno.",
+            TacticalAdvice = "Enfréntalo como a un Hulk pero con mayor radio letal. Coordina fuego antitanque o bombas de 500kg. Flanquear su retaguardia para impactar sus escapes térmicos es la única forma balística de abatirlo.",
+            RecommendedWeapons = "Cañón de Riel, Bomba 500KG Eagle, Cañón Automático a la espalda, Láser Orbital."
+        },
+
+        // ═══════════════════════════════════════════════════════════════
+        // THE ILLUMINATE (5 ENTIDADES - ORDEN PSÍONICA ANCESTRAL)
+        // ═══════════════════════════════════════════════════════════════
+        new BestiaryEntry
+        {
+            Id = "watcher",
+            SpriteKey = "watcher",
+            Name = "Vigía Iluminado",
+            EnglishName = "Watcher",
+            Codename = "Sonda de Exploración",
+            Faction = Faction.Illuminate,
+            EnemyType = EnemyType.Watcher,
+            ThreatPips = 1,
+            ArmorClass = "Ligero con Escudo Energético (120 HP)",
+            Weakpoints = "Ojo sensor central (tras agotar escudo)",
+            Description = "Sonda de reconocimiento levitante equipada con un ojo sensor psiónico y proyector de barrera energética. Patrulla las ruinas emitiendo pulsos electromagnéticos. Si detecta helldivers, emite un chillido psiónico de alarma que invoca desterrados y trípodes.",
+            TacticalAdvice = "Sobrecarga su escudo rápidamente con fuego sostenido o armas de plasma antes de que complete su secuencia de alerta psiónica.",
+            RecommendedWeapons = "Fusil Liberator, Plasma Scorcher, Cañón de Riel."
+        },
+        new BestiaryEntry
+        {
+            Id = "outcast",
+            SpriteKey = "outcast",
+            Name = "Desterrado Iluminado",
+            EnglishName = "Outcast",
+            Codename = "Asesino Psiónico",
+            Faction = Faction.Illuminate,
+            EnemyType = EnemyType.Outcast,
+            ThreatPips = 2,
+            ArmorClass = "Ligero Ágil / Escudo Energético (150 HP)",
+            Weakpoints = "Torso y cabeza tras romper escudo",
+            Description = "Guerrero alienígena fanático armado con dos espadas psiónicas gemelas de plasma cian. Utiliza la manipulación del vacío para teletransportarse instantáneamente detrás de su objetivo y asestar cortes devastadores.",
+            TacticalAdvice = "Cuando veas la distorsión dimensional de su teletransporte, rueda de inmediato [ESPACIO] hacia adelante y gira para abatir su escudo con disparos de escopeta.",
+            RecommendedWeapons = "Escopeta Breaker, Dominator Jar-5, Subfusil Defender."
+        },
+        new BestiaryEntry
+        {
+            Id = "tripod",
+            SpriteKey = "tripod",
+            Name = "Trípode Iluminado",
+            EnglishName = "Tripod",
+            Codename = "Andador de Artillería Psiónica",
+            Faction = Faction.Illuminate,
+            EnemyType = EnemyType.Tripod,
+            ThreatPips = 3,
+            ArmorClass = "Medio Pesado / Escudo Reforzado (280 HP)",
+            Weakpoints = "Articulaciones de las tres patas y cúpula superior",
+            Description = "Elegante máquina bípode/trípode de zancada alta que se eleva sobre el campo de batalla. Proyecta una densa cúpula de energía y dispara un haz continuo de energía psiónica de alta intensidad que barre columnas defensivas.",
+            TacticalAdvice = "Su escudo recarga tras 5 segundos sin daño. Mantén presión de fuego constante. Rompe sus zancadas mecánicas para derribar la plataforma.",
+            RecommendedWeapons = "Cañón Automático, Cañón de Riel, Ataque Aéreo Eagle."
+        },
+        new BestiaryEntry
+        {
+            Id = "illusionist",
+            SpriteKey = "illusionist",
+            Name = "Ilusionista Iluminado",
+            EnglishName = "Illusionist",
+            Codename = "Conjurador Psiónico",
+            Faction = Faction.Illuminate,
+            EnemyType = EnemyType.Illusionist,
+            ThreatPips = 3,
+            ArmorClass = "Medio / Escudo de Frecuencia (350 HP)",
+            Weakpoints = "Orbe de levitación y cabeza alienígena",
+            Description = "Poderoso hechicero alienígena que levita enfundado en túnicas ceremoniales violetas. Lanza orbes psiónicos teledirigidos lentos pero devastadores que desorientan a los helldivers y distorsionan la visión táctica.",
+            TacticalAdvice = "Los orbes psiónicos pueden ser destruidos en el aire con disparos rápidos. Usa fuego de alto impacto para interrumpir sus conjuros y reventar su escudo.",
+            RecommendedWeapons = "Dominator Jar-5, Cañón de Riel, Torreta Automática."
+        },
+        new BestiaryEntry
+        {
+            Id = "council_member",
+            SpriteKey = "council_member",
+            Name = "Miembro del Consejo",
+            EnglishName = "Council Member",
+            Codename = "Jerarca del Gran Concilio",
+            Faction = Faction.Illuminate,
+            EnemyType = EnemyType.CouncilMember,
+            ThreatPips = 4,
+            ArmorClass = "Ultra Pesado / Megabarrera Psiónica (600 HP)",
+            Weakpoints = "Núcleo de distorsión gravitatoria bajo la túnica dorada",
+            Description = "Líder supremo y jerarca de los Iluminados. Flota en una esfera de energía rodeado por anillos concéntricos giratorios de oro y plasma. Desata tormentas dimensionales en 360 grados, dispara haces concentrados de aniquilación y regenera escudos a voluntad.",
+            TacticalAdvice = "Prioridad máxima de combate orbital. La sobrecarga de su megabarrera requiere concentrar el fuego de toda la escuadra o un impacto directo de Bomba de 500kg o Láser Orbital.",
+            RecommendedWeapons = "Bomba 500KG Eagle, Láser Orbital, Cañón de Riel antitanque, Quasar Cannon."
         }
     };
 }
